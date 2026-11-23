@@ -1,4 +1,5 @@
 #pragma once
+#include <godot_cpp/classes/label3d.hpp>
 #include "../game_data.h"
 #include "footballer.h"
 
@@ -32,7 +33,10 @@ public:
 	bool human[2] = { false, false }, autoplay[2] = { false, false };
 	int ctrl[2] = { -1, -1 };
 	Vector3 in_move[2], eff_move[2];
-	bool in_sprint[2] = { false, false }, in_press[2] = { false, false };
+	bool in_sprint[2] = { false, false }, in_press[2] = { false, false }, in_tpress[2] = { false, false };
+	float press_burst[2] = { 0.f, 0.f };
+	float crowd_excite = 0.f, screen_t = 0.f;
+	godot::Label3D *big_screen = nullptr;
 	float idle_t[2] = { 0, 0 }, ai_skill[2] = { 1, 1 }, react[2] = { 0.35f, 0.35f };
 	int local_team = 0;
 
@@ -177,6 +181,9 @@ private:
 	void human_action(int t, const String &a, float value);
 	void switch_player(int t);
 	bool human_aim(int t, float &aim) const;
+	void do_slide(Footballer *c, Vector3 dir);
+	void gesture_tap(int t, Footballer *c, bool has, Vector3 w);
+	void gesture_swipe(int t, Footballer *c, bool has, Vector3 dir, float power);
 	void human_pass(int t, Footballer *c, const String &kind);
 
 	void ai(float delta);

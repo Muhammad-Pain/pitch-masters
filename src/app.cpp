@@ -9,6 +9,7 @@
 #include "ui_kit.h"
 
 #include <godot_cpp/classes/control.hpp>
+#include <godot_cpp/classes/rendering_server.hpp>
 #include <godot_cpp/classes/engine.hpp>
 #include <godot_cpp/classes/multiplayer_api.hpp>
 #include <godot_cpp/classes/gradient.hpp>
@@ -33,10 +34,17 @@ void PMApp::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_current"), &PMApp::get_current);
 	ClassDB::bind_method(D_METHOD("debug_info"), &PMApp::debug_info);
 	ClassDB::bind_method(D_METHOD("debug_photo", "card_id", "path", "open_crop"), &PMApp::debug_photo);
+	ClassDB::bind_method(D_METHOD("debug_cam", "eye", "look"), &PMApp::debug_cam);
 	ClassDB::bind_method(D_METHOD("debug_list_patches"), &PMApp::debug_list_patches);
 	ClassDB::bind_method(D_METHOD("debug_install_patch", "path"), &PMApp::debug_install_patch);
 	ClassDB::bind_method(D_METHOD("debug_activate_patch", "id"), &PMApp::debug_activate_patch);
 	ClassDB::bind_method(D_METHOD("debug_install_example"), &PMApp::debug_install_example);
+}
+
+void PMApp::debug_cam(Vector3 eye, Vector3 look) {
+	dbg_cam = true;
+	dbg_eye = eye;
+	dbg_look = look;
 }
 
 bool PMApp::debug_photo(int card_id, const String &path, bool open_crop) {
@@ -139,11 +147,26 @@ void PMApp::_ready() {
 	add_child(net);
 	net->on_start_match = [](const Dictionary &p) { PMApp::go("match", p); };
 	get_viewport()->set_embedding_subwindows(true);
+	apply_quality();
 	rebuild_backdrop();
 	show_screen("title", Dictionary());
 }
 
 PMApp::~PMApp() { free_hero(); }
+
+void PMApp::apply_quality() {
+	if (!singleton || !singleton->is_inside_tree()) return;
+	GameData &g = GameData::get();
+	int q = g.eff_quality();
+	Engine::get_singleton()->set_max_fps(g.settings.fps);
+	Viewport *vp = singleton->get_viewport();
+	const float scale[4] = { 0.62f, 0.8f, 1.f, 1.f };
+	const float lod[4] = { 6.f, 3.f, 1.5f, 0.75f };
+	vp->set_scaling_3d_scale(scale[q]);
+	vp->set_msaa_3d(q >= 3 ? Viewport::MSAA_4X : (q == 2 ? Viewport::MSAA_2X : Viewport::MSAA_DISABLED));
+	vp->set_mesh_lod_threshold(lod[q]);
+	RenderingServer::get_singleton()->directional_shadow_atlas_set_size(q >= 3 ? 4096 : 2048, true);
+}
 
 void PMApp::free_hero() {
 	if (hero) {
@@ -187,6 +210,8 @@ void PMApp::build_showcase() {
 	uint32_t hsh = best ? (uint32_t)best->name.hash() : 7u;
 	kit.skin = CharLib::skin_tone((int)(hsh % 6));
 	kit.hair = CharLib::hair_tone((int)((hsh >> 8) % 5));
+	kit.hair_style = (int)((hsh >> 12) % 3);
+	kit.beard = ((hsh >> 16) % 3) == 0;
 	hero->setup(showcase, kit, num, sh);
 	hero->pos = Vector3(0, 0, 0);
 	hero->facing = (float)Math_PI * 0.5f - 0.38f; // three-quarter view towards the camera
@@ -290,6 +315,12 @@ void PMApp::_process(double delta) {
 			hero_next = hero_t + 7.f + rng().randf() * 4.f;
 		}
 		hero->animate((float)delta, 0.f);
+	}
+	if (dbg_cam) {
+		bd_cam->set_fov(30);
+		bd_cam->set_position(dbg_eye);
+		bd_cam->look_at(dbg_look, Vector3(0, 1, 0));
+		return;
 	}
 	if (hero_mode && hero) {
 		// close-up on the club's star player: he stands on the right third of the screen

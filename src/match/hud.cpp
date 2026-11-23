@@ -5,6 +5,7 @@
 #include "match.h"
 
 #include <godot_cpp/classes/input.hpp>
+#include <godot_cpp/classes/time.hpp>
 #include <godot_cpp/classes/input_event_key.hpp>
 #include <godot_cpp/classes/input_event_mouse_button.hpp>
 #include <godot_cpp/classes/input_event_mouse_motion.hpp>
@@ -26,6 +27,48 @@ void PMHud::_ready() {
 	font = get_theme_default_font();
 	bold = kit::font_bold();
 	if (bold.is_null()) bold = font;
+	controls = GameData::get().settings.controls;
+}
+
+bool PMHud::button_visible(const String &name) const { return controls < 2 || name == "sprint"; }
+
+bool PMHud::screen_to_pitch(Vector2 sp, Vector3 &out) const {
+	if (!m || !m->cam) return false;
+	Vector3 o = m->cam->project_ray_origin(sp);
+	Vector3 n = m->cam->project_ray_normal(sp);
+	if (n.y > -0.02f) return false;
+	float t = -o.y / n.y;
+	out = o + n * t;
+	out.y = 0.f;
+	return true;
+}
+
+void PMHud::finish_gesture(Vector2 p) {
+	float dt = (float)(Time::get_singleton()->get_ticks_msec() - ges_t0) / 1000.f;
+	Vector2 d = p - ges_start;
+	ges_index = -1;
+	if (!m) return;
+	if (d.length() < 26.f && dt < 0.4f) {
+		Vector3 w;
+		if (screen_to_pitch(p, w)) {
+			m->local_action("tap:" + String::num(w.x, 2) + ":" + String::num(w.z, 2));
+			fx_pos = p;
+			fx_t = 0.5f;
+			fx_swipe = false;
+		}
+	} else if (d.length() > 55.f && dt < 0.7f) {
+		Vector3 a, b;
+		if (screen_to_pitch(ges_start, a) && screen_to_pitch(p, b)) {
+			Vector3 dir = b - a;
+			float speed = d.length() / std::max(dt, 0.05f);
+			float power = clampf(0.5f + d.length() / (get_size().y * 0.9f) + speed / 9000.f, 0.5f, 1.05f);
+			m->local_action("swipe:" + String::num(dir.x, 3) + ":" + String::num(dir.z, 3), power);
+			fx_from = ges_start;
+			fx_pos = p;
+			fx_t = 0.45f;
+			fx_swipe = true;
+		}
+	}
 }
 
 void PMHud::rrect(Rect2 r, Color c, float radius, Color border, float bw) {
@@ -55,11 +98,12 @@ void PMHud::layout() {
 	Vector2 s = get_size();
 	if (!buttons.empty() && s == last_size) return;
 	last_size = s;
-	buttons["shoot"] = { Vector2(s.x - 112, s.y - 112), 64.f, Color::html("ff4d5e"), S("УДАР"), S("ОТБОР") };
-	buttons["pass"] = { Vector2(s.x - 262, s.y - 78), 52.f, Color::html("3b82f6"), S("ПАС"), S("СМЕНА") };
-	buttons["through"] = { Vector2(s.x - 236, s.y - 214), 48.f, Color::html("22c55e"), S("РАЗРЕЗ"), S("ПРЕСС") };
-	buttons["sprint"] = { Vector2(s.x - 96, s.y - 262), 44.f, Color::html("f59e0b"), S("РЫВОК"), S("РЫВОК") };
-	buttons["lob"] = { Vector2(s.x - 388, s.y - 64), 40.f, Color::html("06b6d4"), S("НАВЕС"), S("НАВЕС") };
+	// eFootball-style cluster: big shoot/press on the right, pass below, through above, lob left, sprint on top
+	buttons["shoot"] = { Vector2(s.x - 110, s.y - 150), 62.f, Color::html("ff5a6a"), S("УДАР"), S("ПРЕССИНГ") };
+	buttons["pass"] = { Vector2(s.x - 236, s.y - 74), 56.f, Color::html("60a5fa"), S("ПАС"), S("СМЕНА") };
+	buttons["through"] = { Vector2(s.x - 252, s.y - 222), 50.f, Color::html("4ade80"), S("РАЗРЕЗ"), S("ПОДКАТ") };
+	buttons["lob"] = { Vector2(s.x - 376, s.y - 112), 46.f, Color::html("22d3ee"), S("НАВЕС"), S("КОМ.ПРЕСС") };
+	buttons["sprint"] = { Vector2(s.x - 112, s.y - 296), 46.f, Color::html("fbbf24"), S("РЫВОК"), S("РЫВОК") };
 }
 
 Rect2 PMHud::pause_rect() const { return Rect2(Vector2(get_size().x - 78, 16), Vector2(60, 52)); }
@@ -90,7 +134,7 @@ void PMHud::keyboard() {
 	m->local_move(joy_vec);
 	m->local_sprint(btn_touch.count("sprint") || in->is_physical_key_pressed(KEY_SHIFT));
 	bool has = m->local_has_ball();
-	m->local_press(!has && (btn_touch.count("through") || in->is_physical_key_pressed(KEY_L)));
+	m->local_press(!has && ((btn_touch.count("shoot") && press_hold > 0.15f) || in->is_physical_key_pressed(KEY_L)));
 }
 
 void PMHud::_unhandled_key_input(const Ref<InputEvent> &e) {
@@ -138,7 +182,7 @@ void PMHud::_input(const Ref<InputEvent> &e) {
 		return;
 	}
 	Ref<InputEventMouseMotion> mm = e;
-	if (mm.is_valid() && mm->get_device() != InputEvent::DEVICE_ID_EMULATION && joy_index == 99) drag(99, mm->get_position());
+	if (mm.is_valid() && mm->get_device() != InputEvent::DEVICE_ID_EMULATION && (joy_index == 99 || ges_index == 99)) drag(99, mm->get_position());
 }
 
 void PMHud::touch(int index, Vector2 p, bool pressed) {
@@ -160,12 +204,21 @@ void PMHud::touch(int index, Vector2 p, bool pressed) {
 			return;
 		}
 		for (auto &kv : buttons) {
-			if (p.distance_to(kv.second.pos) < kv.second.r * 1.3f) {
+			if (!button_visible(kv.first)) continue;
+			if (p.distance_to(kv.second.pos) < kv.second.r * 1.25f) {
 				btn_touch[kv.first] = index;
 				press(kv.first);
 				get_viewport()->set_input_as_handled();
 				return;
 			}
+		}
+		if (controls >= 1 && ges_index == -1 && p.x > get_size().x * 0.42f && p.y > 90.f && !m->local_auto()) {
+			ges_index = index;
+			ges_start = p;
+			ges_cur = p;
+			ges_t0 = Time::get_singleton()->get_ticks_msec();
+			get_viewport()->set_input_as_handled();
+			return;
 		}
 		if (p.x < get_size().x * 0.5f && joy_index == -1 && p.y > get_size().y * 0.25f) {
 			joy_index = index;
@@ -175,6 +228,7 @@ void PMHud::touch(int index, Vector2 p, bool pressed) {
 			get_viewport()->set_input_as_handled();
 		}
 	} else {
+		if (index == ges_index) finish_gesture(p);
 		if (index == joy_index) {
 			joy_index = -1;
 			joy_vec = Vector2();
@@ -190,6 +244,10 @@ void PMHud::touch(int index, Vector2 p, bool pressed) {
 }
 
 void PMHud::drag(int index, Vector2 p) {
+	if (index == ges_index) {
+		ges_cur = p;
+		return;
+	}
 	if (index != joy_index) return;
 	Vector2 d = p - joy_center;
 	if (d.length() > JOY_R) {
@@ -204,19 +262,32 @@ void PMHud::drag(int index, Vector2 p) {
 
 void PMHud::press(const String &name) {
 	if (!m) return;
+	bool has = m->local_has_ball();
 	if (name == "shoot") {
-		if (m->local_has_ball()) shoot_hold = 0.f;
-		else m->local_action("shoot");
+		if (has) shoot_hold = 0.f;
+		else press_hold = 0.f; // hold = pressing (keyboard() feeds local_press), quick tap = tackle
 	} else if (name == "pass") {
 		m->local_action("pass");
 	} else if (name == "through") {
-		if (m->local_has_ball()) m->local_action("through");
+		m->local_action(has ? String("through") : String("slide"));
 	} else if (name == "lob") {
-		m->local_action("lob");
+		if (has) m->local_action("lob");
+		else {
+			tpress_on = true;
+			m->local_action("tpress_on");
+		}
 	}
 }
 
 void PMHud::release(const String &name) {
+	if (name == "lob" && tpress_on && m) {
+		tpress_on = false;
+		m->local_action("tpress_off");
+	}
+	if (name == "shoot" && press_hold >= 0.f && m) {
+		if (press_hold < 0.22f) m->local_action("shoot");
+		press_hold = -1.f;
+	}
 	if (name == "shoot" && shoot_hold >= 0.f && m) {
 		float power = clampf(0.45f + shoot_hold * 0.75f, 0.45f, 1.05f);
 		shoot_hold = -1.f;
@@ -225,6 +296,8 @@ void PMHud::release(const String &name) {
 }
 
 void PMHud::_physics_process(double delta) {
+	if (press_hold >= 0.f) press_hold += (float)delta;
+	if (fx_t > 0.f) fx_t -= (float)delta;
 	if (shoot_hold >= 0.f) {
 		shoot_hold += (float)delta;
 		if (shoot_hold > 1.2f) release("shoot");
@@ -403,19 +476,42 @@ void PMHud::_draw() {
 		}
 		draw_circle(kn, 40, Color(1, 1, 1, active ? 0.5f : 0.25f));
 		draw_arc(kn, 40, 0, Math_TAU, 32, Color(1, 1, 1, 0.6f), 2.f);
-		// ---- action buttons
+		// ---- action buttons (translucent white like mobile football games, contextual labels)
 		bool has = m->local_has_ball();
 		for (auto &kv : buttons) {
+			if (!button_visible(kv.first)) continue;
 			const Btn &b = kv.second;
 			bool pr2 = btn_touch.count(kv.first) > 0;
-			float a = on ? 0.4f : 1.f;
-			float r = pr2 ? b.r * 0.94f : b.r;
-			draw_circle(b.pos, r, Color(0.02f, 0.04f, 0.1f, (pr2 ? 0.75f : 0.5f) * a));
-			draw_circle(b.pos, r - 5, Color(b.color, (pr2 ? 0.55f : 0.22f) * a));
-			draw_arc(b.pos, r, 0, Math_TAU, 48, Color(b.color.lightened(0.25f), 0.95f * a), 3.f);
+			float a = on ? 0.35f : 1.f;
+			float r = pr2 ? b.r * 0.93f : b.r;
+			Color tint = has ? b.color : Color::html("f8fafc");
+			draw_circle(b.pos, r + 3, Color(0, 0, 0, 0.18f * a));
+			draw_circle(b.pos, r, Color(1, 1, 1, (pr2 ? 0.42f : 0.16f) * a));
+			draw_circle(b.pos, r * 0.78f, Color(tint, (pr2 ? 0.35f : 0.12f) * a));
+			draw_arc(b.pos, r, 0, Math_TAU, 56, Color(1, 1, 1, 0.85f * a), 2.5f, true);
+			draw_arc(b.pos, r - 6, -Math_PI * 0.85f, -Math_PI * 0.15f, 20, Color(tint, 0.9f * a), 3.f, true);
 			String t = has ? b.label : b.alt;
-			text_b(b.pos, t, kv.first == "shoot" ? 22 : 18, Color(1, 1, 1, a), r * 1.7f);
+			text_b(b.pos + Vector2(0, 2), t, kv.first == "shoot" ? 21 : 17, Color(1, 1, 1, a), r * 1.72f);
+			if (!has && kv.first == "shoot") text_b(b.pos + Vector2(0, r * 0.52f), S("удерж."), 12, Color(1, 1, 1, 0.65f * a));
 		}
+		if (press_hold > 0.15f) {
+			const Btn &sb = buttons["shoot"];
+			draw_arc(sb.pos, sb.r + 9, 0, Math_TAU, 48, Color(1, 0.45f, 0.4f, 0.8f), 4.f, true);
+		}
+		// ---- gesture feedback
+		if (ges_index != -1 && ges_cur.distance_to(ges_start) > 20.f) {
+			draw_line(ges_start, ges_cur, Color(1, 1, 1, 0.55f), 6.f, true);
+			draw_circle(ges_cur, 10, Color(1, 1, 1, 0.7f));
+		}
+		if (fx_t > 0.f) {
+			float k = fx_t / 0.5f;
+			if (fx_swipe) {
+				draw_line(fx_from, fx_pos, Color(1, 0.9f, 0.3f, k), 8.f * k + 2.f, true);
+			} else {
+				draw_arc(fx_pos, 18 + (1.f - k) * 26.f, 0, Math_TAU, 32, Color(1, 1, 1, k), 3.f, true);
+			}
+		}
+		if (controls == 2 && !on) text_b(Vector2(s.x * 0.72f, s.y - 40), S("Тап по игроку — пас • свайп к воротам — удар"), 15, Color(1, 1, 1, 0.55f));
 		if (shoot_hold >= 0.f) {
 			const Btn &sb = buttons["shoot"];
 			float pw = clampf(0.45f + shoot_hold * 0.75f, 0.45f, 1.05f);

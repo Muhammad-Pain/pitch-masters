@@ -1,4 +1,7 @@
 #include "stadium.h"
+#include <godot_cpp/classes/gradient_texture2d.hpp>
+#include <godot_cpp/classes/gradient.hpp>
+#include "../game_data.h"
 #include <godot_cpp/classes/plane_mesh.hpp>
 #include <godot_cpp/classes/shader_material.hpp>
 #include <godot_cpp/classes/shader.hpp>
@@ -94,8 +97,9 @@ static void environment(Node3D *root) {
 	sun->set_rotation_degrees(Vector3(-58, 28, 0));
 	sun->set_param(Light3D::PARAM_ENERGY, 0.92f);
 	sun->set_color(Color(1.f, 0.97f, 0.92f));
-	sun->set_shadow(true);
-	sun->set_shadow_mode(DirectionalLight3D::SHADOW_PARALLEL_2_SPLITS);
+	int q = GameData::get().eff_quality();
+	sun->set_shadow(q >= 1);
+	sun->set_shadow_mode(q >= 2 ? DirectionalLight3D::SHADOW_PARALLEL_2_SPLITS : DirectionalLight3D::SHADOW_ORTHOGONAL);
 	sun->set_param(Light3D::PARAM_SHADOW_MAX_DISTANCE, 95.f);
 	sun->set_param(Light3D::PARAM_SHADOW_OPACITY, 0.72f);
 	sun->set_param(Light3D::PARAM_SHADOW_BLUR, 1.4f);
@@ -230,6 +234,8 @@ static void goal(Node3D *root, float s, const Ref<StandardMaterial3D> &net) {
 	for (float zs : { -1.f, 1.f }) quad(root, Vector2(2.f, GH), Vector3((HL + 1.f) * s, GH * 0.5f, GW * zs), Vector3(), net);
 }
 
+static Ref<ShaderMaterial> led(Color c);
+
 static void boards(Node3D *root, const std::vector<String> &words) {
 	Color colors[6] = { Color::html("1d4ed8"), Color::html("0f172a"), Color::html("dc2626"), Color::html("0f172a"), Color::html("16a34a"), Color::html("0f172a") };
 	float seg = 10.f;
@@ -237,7 +243,7 @@ static void boards(Node3D *root, const std::vector<String> &words) {
 	for (float zs : { -1.f, 1.f }) {
 		for (float x = -60.f; x < 60.f; x += seg) {
 			float bz = (HW + 4.f) * zs;
-			box(root, Vector3(seg - 0.2f, 0.95f, 0.15f), Vector3(x + seg * 0.5f, 0.48f, bz), mat(colors[i % 6], false, 0.6f));
+			box(root, Vector3(seg - 0.2f, 0.95f, 0.15f), Vector3(x + seg * 0.5f, 0.48f, bz), led(colors[i % 6]));
 			Label3D *l = memnew(Label3D);
 			l->set_text(words.empty() ? String("PITCH MASTERS") : words[i % words.size()]);
 			l->set_font_size(96);
@@ -252,12 +258,12 @@ static void boards(Node3D *root, const std::vector<String> &words) {
 	}
 	for (float xs : { -1.f, 1.f })
 		for (float zs : { -1.f, 1.f }) {
-			box(root, Vector3(0.15f, 0.95f, 26.f), Vector3((HL + 5.f) * xs, 0.48f, 18.f * zs), mat(colors[(i + 1) % 6], false, 0.5f));
+			box(root, Vector3(0.15f, 0.95f, 26.f), Vector3((HL + 5.f) * xs, 0.48f, 18.f * zs), led(colors[(i + 1) % 6]));
 			i++;
 		}
 }
 
-static Ref<StandardMaterial3D> crowd_material(int seed, Color home, Color away) {
+static Ref<ImageTexture> crowd_texture(int seed, Color home, Color away) {
 	// 8x10 px per seat: head, shoulders, torso; rows separated by a dark step
 	const int sw = 6, sh = 10, cols = 48, rows = 8;
 	const int w = sw * cols, h = sh * rows;
@@ -289,24 +295,55 @@ static Ref<StandardMaterial3D> crowd_material(int seed, Color home, Color away) 
 				}
 		}
 	img->generate_mipmaps();
-	Ref<StandardMaterial3D> m;
+	return ImageTexture::create_from_image(img);
+}
+
+static std::vector<Ref<ShaderMaterial>> g_crowd;
+static Ref<Shader> g_crowd_shader, g_led_shader;
+static float g_excite = 0.f;
+
+static const char *CROWD_SHADER = R"(
+shader_type spatial;
+render_mode diffuse_lambert, specular_disabled;
+uniform sampler2D tex : source_color, filter_linear_mipmap_anisotropic;
+uniform vec2 tiles = vec2(1.0);
+uniform float excite = 0.0;
+void fragment() {
+	vec2 uv = UV * tiles;
+	// every seat column bobs on its own phase; on a goal the whole stand jumps
+	float col = floor(uv.x * 48.0) + floor(uv.y * 8.0) * 13.0;
+	float ph = fract(sin(col * 12.9898) * 43758.5453) * 6.283;
+	float bob = sin(TIME * (2.0 + excite * 6.0) + ph) * (0.012 + excite * 0.05);
+	uv.y += max(bob, -0.02) / 8.0;
+	vec3 c = texture(tex, uv).rgb;
+	ALBEDO = c * 0.9;
+	ROUGHNESS = 1.0;
+}
+)";
+
+static Ref<ShaderMaterial> crowd_material(int seed, Color home, Color away) {
+	if (g_crowd_shader.is_null()) {
+		g_crowd_shader.instantiate();
+		g_crowd_shader->set_code(CROWD_SHADER);
+	}
+	Ref<ShaderMaterial> m;
 	m.instantiate();
-	m->set_texture(BaseMaterial3D::TEXTURE_ALBEDO, ImageTexture::create_from_image(img));
-	m->set_texture_filter(BaseMaterial3D::TEXTURE_FILTER_LINEAR_WITH_MIPMAPS_ANISOTROPIC);
-	m->set_roughness(1.f);
-	m->set_albedo(Color(0.9f, 0.9f, 0.95f));
+	m->set_shader(g_crowd_shader);
+	m->set_shader_parameter("tex", crowd_texture(seed, home, away));
+	m->set_shader_parameter("excite", g_excite);
+	g_crowd.push_back(m);
 	return m;
 }
 
-static void slope(Node3D *root, const Ref<StandardMaterial3D> &m, float near, float far, float y0, float y1, float length, float side, bool along_x) {
+static void slope(Node3D *root, const Ref<ShaderMaterial> &m, float near, float far, float y0, float y1, float length, float side, bool along_x) {
 	float depth = far - near, rise = y1 - y0;
 	float slen = std::sqrt(depth * depth + rise * rise);
 	float ang = std::atan2(rise, depth);
 	Ref<QuadMesh> q;
 	q.instantiate();
 	q->set_size(Vector2(length, slen));
-	Ref<StandardMaterial3D> mm = m->duplicate();
-	mm->set_uv1_scale(Vector3(length / 26.f, slen / 6.5f, 1));
+	Ref<ShaderMaterial> mm = m;
+	mm->set_shader_parameter("tiles", Vector2(length / 26.f, slen / 6.5f));
 	float mid = (near + far) * 0.5f, midy = (y0 + y1) * 0.5f;
 	MeshInstance3D *mi = mesh(root, q, mm, along_x ? Vector3(mid * side, midy, 0) : Vector3(0, midy, mid * side));
 	if (along_x) mi->set_rotation(Vector3(0, -Math_PI * 0.5f * side, 0));
@@ -316,29 +353,164 @@ static void slope(Node3D *root, const Ref<StandardMaterial3D> &m, float near, fl
 
 static void stands(Node3D *root, Color home, Color away) {
 	Ref<StandardMaterial3D> concrete = mat(Color::html("2a3142"));
-	Ref<StandardMaterial3D> roof = mat(Color::html("161b26"));
+	Ref<StandardMaterial3D> roof = mat(Color::html("1c2230"), false, 0.5f);
+	Ref<StandardMaterial3D> steel = mat(Color::html("8a94a6"), false, 0.35f);
+	Ref<StandardMaterial3D> band = mat(Color::html("0b1220"));
+	Ref<StandardMaterial3D> strip = mat(Color::html("e6f2ff"), true);
 	for (float zs : { -1.f, 1.f }) {
-		float near = HW + 8.f, far = HW + 34.f, y1 = 20.f, length = 136.f;
-		slope(root, crowd_material(zs < 0 ? 7 : 11, home, away), near, far, 1.2f, y1, length, zs, false);
-		box(root, Vector3(length, 1.2f, 2.f), Vector3(0, 0.6f, (near - 1.f) * zs), concrete);
-		box(root, Vector3(length, 2.f, 18.f), Vector3(0, y1 + 9.f, (far - 7.f) * zs), roof, Vector3(-0.12f * zs, 0, 0));
-		box(root, Vector3(length, y1 + 9.f, 1.f), Vector3(0, (y1 + 9.f) * 0.5f, (far + 0.5f) * zs), concrete);
+		float length = 136.f;
+		// lower tier
+		slope(root, crowd_material(zs < 0 ? 7 : 11, home, away), HW + 8.f, HW + 24.f, 1.2f, 11.f, length, zs, false);
+		box(root, Vector3(length, 1.2f, 2.f), Vector3(0, 0.6f, (HW + 7.f) * zs), concrete);
+		// concourse band with a light strip
+		box(root, Vector3(length, 2.4f, 2.f), Vector3(0, 12.2f, (HW + 24.8f) * zs), band);
+		box(root, Vector3(length, 0.25f, 0.1f), Vector3(0, 11.6f, (HW + 23.75f) * zs), strip);
+		// upper tier
+		slope(root, crowd_material(zs < 0 ? 19 : 23, home, away), HW + 25.5f, HW + 42.f, 13.4f, 27.f, length, zs, false);
+		box(root, Vector3(length, 31.f, 1.f), Vector3(0, 15.5f, (HW + 42.5f) * zs), concrete);
+		// roof slab tilted towards the pitch + trusses
+		float ry = 33.f;
+		box(root, Vector3(length + 4.f, 0.8f, 24.f), Vector3(0, ry, (HW + 32.f) * zs), roof, Vector3(-0.09f * zs, 0, 0));
+		box(root, Vector3(length + 4.f, 0.6f, 0.6f), Vector3(0, ry - 1.1f, (HW + 20.5f) * zs), steel);
+		for (float x = -64.f; x <= 64.f; x += 16.f) {
+			box(root, Vector3(0.35f, 0.35f, 24.f), Vector3(x, ry - 0.9f, (HW + 32.f) * zs), steel, Vector3(-0.09f * zs, 0, 0));
+			box(root, Vector3(0.6f, ry, 0.6f), Vector3(x, ry * 0.5f, (HW + 43.f) * zs), steel);
+		}
+		box(root, Vector3(length + 4.f, 0.3f, 0.3f), Vector3(0, ry - 1.6f, (HW + 20.6f) * zs), strip);
 	}
 	for (float xs : { -1.f, 1.f }) {
 		slope(root, crowd_material(xs < 0 ? 13 : 17, xs < 0 ? home : away, xs < 0 ? away : home), HL + 9.f, HL + 30.f, 1.2f, 16.f, 84.f, xs, true);
 		box(root, Vector3(2.f, 1.2f, 84.f), Vector3((HL + 8.f) * xs, 0.6f, 0), concrete);
+		box(root, Vector3(1.f, 22.f, 84.f), Vector3((HL + 30.5f) * xs, 11.f, 0), concrete);
+		box(root, Vector3(18.f, 0.7f, 88.f), Vector3((HL + 24.f) * xs, 24.f, 0), roof, Vector3(0, 0, 0.08f * xs));
 	}
 }
 
+static MeshInstance3D *halo(Node3D *root, Vector3 pos, float size) {
+	Ref<StandardMaterial3D> m;
+	m.instantiate();
+	Ref<Gradient> gr;
+	gr.instantiate();
+	gr->set_color(0, Color(1.f, 0.98f, 0.9f, 0.9f));
+	gr->set_color(1, Color(1.f, 0.95f, 0.8f, 0.f));
+	gr->add_point(0.25f, Color(1.f, 0.97f, 0.88f, 0.45f));
+	Ref<GradientTexture2D> gt;
+	gt.instantiate();
+	gt->set_gradient(gr);
+	gt->set_fill(GradientTexture2D::FILL_RADIAL);
+	gt->set_fill_from(Vector2(0.5f, 0.5f));
+	gt->set_fill_to(Vector2(1.f, 0.5f));
+	m->set_texture(BaseMaterial3D::TEXTURE_ALBEDO, gt);
+	m->set_transparency(BaseMaterial3D::TRANSPARENCY_ALPHA);
+	m->set_blend_mode(BaseMaterial3D::BLEND_MODE_ADD);
+	m->set_shading_mode(BaseMaterial3D::SHADING_MODE_UNSHADED);
+	m->set_billboard_mode(BaseMaterial3D::BILLBOARD_ENABLED);
+	m->set_depth_draw_mode(BaseMaterial3D::DEPTH_DRAW_DISABLED);
+	return quad(root, Vector2(size, size), pos, Vector3(), m);
+}
+
 static void lights(Node3D *root) {
-	Ref<StandardMaterial3D> pole = mat(Color::html("3b4252"));
-	Ref<StandardMaterial3D> lamp = mat(Color::html("fffbe6"), true);
+	Ref<StandardMaterial3D> pole = mat(Color::html("6b7484"), false, 0.4f);
+	Ref<StandardMaterial3D> frame = mat(Color::html("2b3240"));
+	Ref<StandardMaterial3D> lamp = mat(Color::html("fffbea"), true);
 	for (float xs : { -1.f, 1.f })
 		for (float zs : { -1.f, 1.f }) {
-			Vector3 p((HL + 22.f) * xs, 0, (HW + 26.f) * zs);
-			box(root, Vector3(0.8f, 42.f, 0.8f), p + Vector3(0, 21.f, 0), pole);
-			box(root, Vector3(7.f, 3.5f, 0.6f), p + Vector3(0, 43.f, 0), lamp, Vector3(0.5f * zs, std::atan2(p.x, p.z), 0));
+			Vector3 p((HL + 26.f) * xs, 0, (HW + 46.f) * zs);
+			mesh(root, cyl(0.7f, 50.f, 10), pole, p + Vector3(0, 25.f, 0));
+			Node3D *head = memnew(Node3D);
+			root->add_child(head);
+			head->set_position(p + Vector3(0, 52.f, 0));
+			head->look_at_from_position(p + Vector3(0, 52.f, 0), Vector3(0, 0, 0), Vector3(0, 1, 0));
+			box(head, Vector3(10.f, 5.f, 0.6f), Vector3(0, 0, 0.2f), frame);
+			for (int r = 0; r < 3; r++)
+				for (int c = 0; c < 6; c++) {
+					Vector3 lp(-4.f + c * 1.6f, -1.6f + r * 1.6f, -0.15f);
+					box(head, Vector3(1.2f, 1.2f, 0.2f), lp, lamp);
+				}
+			halo(head, Vector3(0, 0, -1.f), 26.f);
 		}
+}
+
+static void corner_flags(Node3D *root, Color home, Color away) {
+	Ref<StandardMaterial3D> pole = mat(Color(0.95f, 0.95f, 0.95f));
+	for (float xs : { -1.f, 1.f })
+		for (float zs : { -1.f, 1.f }) {
+			Vector3 p(HL * xs, 0, HW * zs);
+			mesh(root, cyl(0.025f, 1.6f, 6), pole, p + Vector3(0, 0.8f, 0));
+			Ref<StandardMaterial3D> fm = mat(xs < 0 ? home : away);
+			fm->set_cull_mode(BaseMaterial3D::CULL_DISABLED);
+			quad(root, Vector2(0.45f, 0.32f), p + Vector3(0.24f * -xs, 1.42f, 0), Vector3(0, 0, 0), fm);
+		}
+}
+
+static void dugouts(Node3D *root, Color home, Color away) {
+	Ref<StandardMaterial3D> base = mat(Color::html("1f2937"));
+	Ref<StandardMaterial3D> glass = mat(Color(0.7f, 0.85f, 1.f, 0.35f));
+	glass->set_transparency(BaseMaterial3D::TRANSPARENCY_ALPHA);
+	for (float xs : { -1.f, 1.f }) {
+		Vector3 c(9.f * xs, 0, -(HW + 2.4f));
+		box(root, Vector3(7.f, 0.5f, 1.4f), c + Vector3(0, 0.25f, 0), base);
+		box(root, Vector3(7.f, 0.08f, 1.6f), c + Vector3(0, 1.6f, 0.1f), glass);
+		box(root, Vector3(7.f, 1.6f, 0.08f), c + Vector3(0, 0.8f, -0.7f), glass);
+		Ref<StandardMaterial3D> seats = mat((xs < 0 ? home : away).darkened(0.2f));
+		for (int i = 0; i < 6; i++) box(root, Vector3(0.45f, 0.9f, 0.4f), c + Vector3(-2.8f + i * 1.1f, 0.95f, -0.2f), seats);
+	}
+}
+
+static void big_screen(Node3D *root) {
+	Ref<StandardMaterial3D> frame = mat(Color::html("111827"));
+	Ref<StandardMaterial3D> screen = mat(Color::html("0b1a33"), true);
+	Vector3 c(HL + 22.f, 21.f, -26.f);
+	box(root, Vector3(0.6f, 7.5f, 16.f), c, frame);
+	box(root, Vector3(0.2f, 6.6f, 15.f), c + Vector3(-0.35f, 0, 0), screen);
+	Label3D *l = memnew(Label3D);
+	l->set_name("BigScreen");
+	l->set_text("PITCH MASTERS");
+	l->set_font_size(160);
+	l->set_pixel_size(0.022f);
+	l->set_modulate(Color(1, 1, 1));
+	l->set_outline_size(0);
+	l->set_position(c + Vector3(-0.5f, 0, 0));
+	l->set_rotation_degrees(Vector3(0, -90, 0));
+	root->add_child(l);
+}
+
+static const char *LED_SHADER = R"(
+shader_type spatial;
+render_mode unshaded;
+uniform vec3 base : source_color = vec3(0.1, 0.2, 0.6);
+varying vec3 wp;
+void vertex() { wp = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz; }
+void fragment() {
+	float sweep = smoothstep(0.0, 0.08, fract(wp.x * 0.012 + wp.z * 0.012 - TIME * 0.18)) * (1.0 - smoothstep(0.08, 0.2, fract(wp.x * 0.012 + wp.z * 0.012 - TIME * 0.18)));
+	float px = step(0.25, fract(wp.x * 22.0)) * step(0.25, fract(wp.y * 22.0));
+	ALBEDO = base * (0.75 + 0.5 * sweep) * (0.85 + 0.15 * px);
+}
+)";
+
+static Ref<ShaderMaterial> led(Color c) {
+	if (g_led_shader.is_null()) {
+		g_led_shader.instantiate();
+		g_led_shader->set_code(LED_SHADER);
+	}
+	Ref<ShaderMaterial> m;
+	m.instantiate();
+	m->set_shader(g_led_shader);
+	m->set_shader_parameter("base", c);
+	return m;
+}
+
+void set_excitement(float e) {
+	if (std::fabs(e - g_excite) < 0.01f) return;
+	g_excite = e;
+	for (auto &m : g_crowd)
+		if (m.is_valid()) m->set_shader_parameter("excite", e);
+}
+
+void release() {
+	g_crowd.clear();
+	g_crowd_shader.unref();
+	g_led_shader.unref();
 }
 
 void build(Node3D *root, const std::vector<String> &board_words, Color home, Color away) {
@@ -348,9 +520,14 @@ void build(Node3D *root, const std::vector<String> &board_words, Color home, Col
 	Ref<StandardMaterial3D> net = net_material();
 	goal(root, -1.f, net);
 	goal(root, 1.f, net);
+	g_crowd.clear();
+	g_excite = 0.f;
 	boards(root, board_words);
 	stands(root, home, away);
 	lights(root);
+	corner_flags(root, home, away);
+	dugouts(root, home, away);
+	big_screen(root);
 }
 
 } // namespace stadium

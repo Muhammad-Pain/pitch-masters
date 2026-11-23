@@ -10,6 +10,8 @@
 #include <godot_cpp/classes/style_box_empty.hpp>
 #include <godot_cpp/classes/scene_tree.hpp>
 #include <godot_cpp/classes/grid_container.hpp>
+#include <godot_cpp/classes/property_tweener.hpp>
+#include <godot_cpp/classes/resource_loader.hpp>
 #include <godot_cpp/classes/center_container.hpp>
 #include <godot_cpp/classes/gradient.hpp>
 #include <godot_cpp/classes/gradient_texture2d.hpp>
@@ -32,6 +34,7 @@ Node *make_screen(const String &name, const Dictionary &params) {
 	else if (name == "pvp") n = memnew(PMPvpScreen);
 	else if (name == "settings") n = memnew(PMSettingsScreen);
 	else if (name == "patches") n = memnew(PMPatchScreen);
+	else if (name == "editor") n = memnew(PMEditScreen);
 	else if (name == "result") n = memnew(PMResultScreen);
 	else if (name == "match") {
 		PMMatch *m = memnew(PMMatch);
@@ -56,6 +59,24 @@ void PMTitle::_ready() {
 	v->set_mouse_filter(MOUSE_FILTER_IGNORE);
 	add_child(v);
 	kit::full_rect(v);
+	// emblem: football in a peacock-feather mandala (the app icon)
+	Ref<Texture2D> emb = ResourceLoader::get_singleton()->load("res://assets/icon/icon_fg_432.png");
+	if (emb.is_valid()) {
+		CenterContainer *ec = memnew(CenterContainer);
+		ec->set_mouse_filter(MOUSE_FILTER_IGNORE);
+		TextureRect *er = memnew(TextureRect);
+		er->set_texture(emb);
+		er->set_expand_mode(TextureRect::EXPAND_IGNORE_SIZE);
+		er->set_stretch_mode(TextureRect::STRETCH_KEEP_ASPECT_CENTERED);
+		er->set_custom_minimum_size(Vector2(190, 190));
+		er->set_pivot_offset(Vector2(95, 95));
+		ec->add_child(er);
+		v->add_child(ec);
+		Ref<Tween> tw = er->create_tween();
+		tw->set_loops();
+		tw->tween_property(er, "scale", Vector2(1.06f, 1.06f), 1.4)->set_trans(Tween::TRANS_SINE);
+		tw->tween_property(er, "scale", Vector2(1.f, 1.f), 1.4)->set_trans(Tween::TRANS_SINE);
+	}
 	Label *t = kit::label("PITCH MASTERS", 100, Color(1, 1, 1), HORIZONTAL_ALIGNMENT_CENTER);
 	t->add_theme_font_override("font", kit::font_bold());
 	t->add_theme_color_override("font_shadow_color", Color(0, 0, 0, 0.45f));
@@ -70,7 +91,7 @@ void PMTitle::_ready() {
 	v->add_child(gap);
 	press = kit::label(S("НАЖМИТЕ, ЧТОБЫ НАЧАТЬ"), 34, Color(1, 1, 1), HORIZONTAL_ALIGNMENT_CENTER);
 	v->add_child(press);
-	Label *ver = kit::label(S("v3.1 • C++"), 18, kit::MUTED, HORIZONTAL_ALIGNMENT_RIGHT);
+	Label *ver = kit::label(S("v3.2 • C++"), 18, kit::MUTED, HORIZONTAL_ALIGNMENT_RIGHT);
 	add_child(ver);
 	ver->set_anchors_and_offsets_preset(PRESET_BOTTOM_RIGHT);
 	ver->set_position(ver->get_position() + Vector2(-24, -16));
@@ -186,6 +207,16 @@ void PMMainMenu::_ready() {
 	// ---- top bar
 	HBoxContainer *top = kit::hbox(14);
 	top->set_mouse_filter(MOUSE_FILTER_IGNORE);
+	Ref<Texture2D> mini = ResourceLoader::get_singleton()->load("res://assets/icon/icon_192.png");
+	if (mini.is_valid()) {
+		TextureRect *mr = memnew(TextureRect);
+		mr->set_texture(mini);
+		mr->set_expand_mode(TextureRect::EXPAND_IGNORE_SIZE);
+		mr->set_stretch_mode(TextureRect::STRETCH_KEEP_ASPECT_CENTERED);
+		mr->set_custom_minimum_size(Vector2(58, 58));
+		mr->set_mouse_filter(MOUSE_FILTER_IGNORE);
+		top->add_child(mr);
+	}
 	VBoxContainer *logo = kit::vbox(-8);
 	logo->set_mouse_filter(MOUSE_FILTER_IGNORE);
 	Label *t = kit::label("PITCH MASTERS", 34, Color(1, 1, 1));
@@ -494,8 +525,8 @@ void PMMainMenu::build_content() {
 		default: {
 			content->add_child(card(S("РЕДАКТИРОВАНИЕ"), S("Патчи"), g.patch.active ? S("Активен: ") + g.patch.name : S("Добавьте файл патча: команды, игроки, эмблемы"), Color::html("06b6d4"), [] { PMApp::go("patches"); }, 200, -1.f, S("ОТКРЫТЬ  ›")));
 			HBoxContainer *h = row();
-			h->add_child(card(S("СИСТЕМА"), S("Настройки"), S("Сложность, камера, звук, повторы"), Color::html("64748b"), [] { PMApp::go("settings"); }, 168));
-			h->add_child(card(S("ЭКРАН"), S("Титульный экран"), S("Вернуться к заставке"), Color::html("334155"), [] { PMApp::go("title"); }, 168));
+			h->add_child(card(S("РЕДАКТИРОВАНИЕ"), S("Редактор"), S("Названия клубов, игроки, цвета формы"), Color::html("f59e0b"), [] { PMApp::go("editor"); }, 168));
+			h->add_child(card(S("СИСТЕМА"), S("Настройки"), S("Графика, управление, камера, звук"), Color::html("64748b"), [] { PMApp::go("settings"); }, 168));
 		} break;
 	}
 	content->add_child(kit::spacer(true));

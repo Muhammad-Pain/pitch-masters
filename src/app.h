@@ -25,7 +25,8 @@ class PMApp : public godot::Node {
 	godot::Node3D *showcase = nullptr;
 	Footballer *hero = nullptr;
 	float hero_t = 0.f, hero_next = 7.f;
-	bool hero_mode = false, hero_snap = false;
+	bool hero_mode = false, hero_snap = false, dbg_cam = false;
+	godot::Vector3 dbg_eye, dbg_look;
 	void build_showcase();
 	void free_hero();
 	bool started = false;
@@ -40,12 +41,14 @@ public:
 	PMSfx *sfx = nullptr;
 
 	static void go(const String &name, const godot::Dictionary &params = godot::Dictionary());
+	static void apply_quality();
 	void show_screen(const String &name, const godot::Dictionary &params);
 	godot::Node *get_current() const { return current; }
 	void rebuild_backdrop();
 	// debug / test helpers (bound to scripting)
 	godot::Dictionary debug_info() const;
 	bool debug_photo(int card_id, const String &path, bool open_crop);
+	void debug_cam(godot::Vector3 eye, godot::Vector3 look);
 	godot::Array debug_list_patches() const;
 	String debug_install_patch(const String &path);
 	String debug_activate_patch(const String &id);

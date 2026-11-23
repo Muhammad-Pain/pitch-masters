@@ -193,6 +193,8 @@ void PMMatch::spawn_players() {
 			}
 			km.skin = CharLib::skin_tone(r.irange(0, 5));
 			km.hair = CharLib::hair_tone(r.irange(0, 4));
+			km.hair_style = r.irange(0, 4);
+			km.beard = r.irange(0, 9) < 3;
 			f->setup(this, km, mp.c.num, shadow_mat);
 			f->tag->set_text(I(mp.c.num) + " " + kit::short_name(mp.c.name));
 			players.push_back(f);
@@ -556,6 +558,18 @@ void PMMatch::_process(double d) {
 		replay_done = false;
 	}
 	prev_state = state;
+	// crowd reacts: jumps on goals, livelier near the boxes; big screen shows the score
+	{
+		float target = state == GOAL ? 1.f : (std::fabs(ball_pos.x) > HL - 18.f ? 0.25f : 0.f);
+		crowd_excite = lerpf(crowd_excite, target, 1.f - std::exp(-2.f * delta));
+		stadium::set_excitement(crowd_excite);
+		screen_t -= delta;
+		if (screen_t <= 0.f) {
+			screen_t = 0.5f;
+			if (!big_screen) big_screen = Object::cast_to<Label3D>(find_child("BigScreen", true, false));
+			if (big_screen) big_screen->set_text(teams[0].shrt + "  " + I(score[0]) + " : " + I(score[1]) + "  " + teams[1].shrt + "\n" + clock_text());
+		}
+	}
 	if (state == GOAL) {
 		goal_clock += delta;
 		if (replay_enabled && !replay && !replay_done && !replay_skipped && goal_clock > 2.2f) start_replay();
@@ -712,6 +726,7 @@ String PMMatch::clock_text() const {
 void PMMatch::update_controls(float delta) {
 	for (int t = 0; t < 2; t++) {
 		eff_move[t] = Vector3();
+		if (press_burst[t] > 0.f) press_burst[t] -= delta;
 		if (!human[t] || autoplay[t]) {
 			ctrl[t] = -1;
 			continue;
@@ -743,7 +758,7 @@ void PMMatch::update_controls(float delta) {
 			ctrl[t] = c->gid;
 		}
 		Vector3 em = mv;
-		if (in_press[t] && holder && holder->team != t && state == PLAY) {
+		if ((in_press[t] || press_burst[t] > 0.f) && holder && holder->team != t && state == PLAY) {
 			Vector3 tg = holder->pos + (own_goal(t) - holder->pos).normalized() * 0.5f;
 			Vector3 d = tg - c->pos;
 			d.y = 0;
@@ -768,6 +783,29 @@ void PMMatch::human_action(int t, const String &action, float value) {
 	} else if (state != PLAY) {
 		return;
 	}
+	if (action == "tpress_on" || action == "tpress_off") {
+		in_tpress[t] = action == "tpress_on";
+		return;
+	}
+	if (action.begins_with("tap:") || action.begins_with("swipe:")) {
+		PackedStringArray a = action.split(":");
+		if (a.size() >= 3) {
+			Vector3 w((float)a[1].to_float(), 0.f, (float)a[2].to_float());
+			if (a[0] == "tap") gesture_tap(t, c, has, w);
+			else if (w.length() > 0.01f) gesture_swipe(t, c, has, w.normalized(), clampf(value, 0.45f, 1.05f));
+		}
+		if (restart && holder != c) begin_play();
+		return;
+	}
+	if (action == "slide") {
+		if (!has && state == PLAY) {
+			Vector3 d = in_move[t];
+			if (d.length() < 0.2f) d = (holder ? holder->pos : ball_ground()) - c->pos;
+			d.y = 0;
+			if (d.length() > 0.01f) do_slide(c, d.normalized());
+		}
+		return;
+	}
 	if (action == "pass") {
 		if (has) human_pass(t, c, "ground");
 		else switch_player(t);
@@ -789,6 +827,75 @@ void PMMatch::human_action(int t, const String &action, float value) {
 		}
 	}
 	if (restart && holder != c) begin_play();
+}
+
+void PMMatch::do_slide(Footballer *c, Vector3 dir) {
+	if (c->slide_t > 0.f || c->stun > 0.f || c->tackle_cd > 0.f || c->rid == R_GK) return;
+	c->slide_t = 0.5f;
+	c->slide_anim = 0.9f;
+	c->slide_dir = dir;
+	c->slide_won = false;
+	c->tackle_cd = 1.1f;
+	c->facing = std::atan2(dir.z, dir.x);
+	PMSfx::p("kick", -10.f);
+}
+
+void PMMatch::gesture_tap(int t, Footballer *c, bool has, Vector3 w) {
+	w.x = clampf(w.x, -HL - 1.f, HL + 1.f);
+	w.z = clampf(w.z, -HW + 0.4f, HW - 0.4f);
+	Footballer *best = nullptr;
+	float bd = has ? 7.f : 8.f;
+	for (auto *m : squads[t]) {
+		if (m == c || (!has && m->rid == R_GK)) continue;
+		float d = fdist(m->pos, w);
+		if (d < bd) {
+			bd = d;
+			best = m;
+		}
+	}
+	if (has) {
+		bool thr = state == OUT && setpiece.active && setpiece.type == "throw";
+		if (best && thr) {
+			kick_to(c, best->pos + best->vel * 0.3f, "throw", (float)c->data.pas);
+			pass_target = best;
+			ctrl[t] = best->gid;
+		} else if (best) {
+			Vector3 dir = best->pos - c->pos;
+			dir.y = 0;
+			Vector3 lead = (attack_vec(t) * 0.6f + dir.normalized() * 0.4f).normalized();
+			do_pass(c, best, false, fdist(c->pos, best->pos) > 32.f, lead);
+		} else {
+			// tap on empty grass: a pass into space (through ball)
+			float d = fdist(c->pos, w);
+			kick_to(c, w, thr ? "throw" : (d > 28.f ? "lob" : "ground"), (float)c->data.pas);
+		}
+		return;
+	}
+	if (best && best != c) {
+		ctrl[t] = best->gid;
+		idle_t[t] = 0.f;
+	}
+	if (holder && holder->team != t && fdist(w, holder->pos) < 5.f) press_burst[t] = 1.6f;
+}
+
+void PMMatch::gesture_swipe(int t, Footballer *c, bool has, Vector3 dir, float power) {
+	if (!has) {
+		if (state == PLAY) do_slide(c, dir);
+		return;
+	}
+	Vector3 g(attack_vec(t).x > 0 ? HL : -HL, 0.f, 0.f);
+	Vector3 to_goal = g - c->pos;
+	to_goal.y = 0;
+	bool restart = state == KICKOFF || state == OUT;
+	if (!restart && dir.dot(to_goal.normalized()) > 0.5f && to_goal.length() < 40.f && std::fabs(dir.x) > 0.05f) {
+		float s = (g.x - c->pos.x) / dir.x;
+		float aimz = clampf(c->pos.z + dir.z * s, -(GW - 0.35f), GW - 0.35f);
+		shoot(c, power, true, aimz, true);
+		return;
+	}
+	// otherwise a long ball in the swipe direction
+	Vector3 tg = c->pos + dir * (16.f + power * 24.f);
+	gesture_tap(t, c, true, tg);
 }
 
 void PMMatch::switch_player(int t) {
@@ -975,6 +1082,12 @@ void PMMatch::ai(float delta) {
 					p->urgency = fdist(p->pos, holder->pos) > 3.f ? 1.f : 0.8f;
 					try_tackle(p, false, 0.05f * ai_skill[t]);
 				}
+				continue;
+			}
+			if (p == cover && holder && holder->team == 1 - t && in_tpress[t]) {
+				p->target = holder->pos + (own_goal(t) - holder->pos).normalized() * 0.8f;
+				p->urgency = 1.f;
+				try_tackle(p, false, 0.05f);
 				continue;
 			}
 			if (p == cover && holder && holder->team == 1 - t) {
@@ -1357,6 +1470,44 @@ void PMMatch::move_players(float delta) {
 		bool hm = is_human_ctrl(p) && (state == PLAY || (state == OUT && p != holder));
 		if (state == GOAL) hm = false;
 		float ms = p->max_speed * (0.78f + 0.22f * p->stamina);
+		if (p->slide_t > 0.f) {
+			p->slide_t -= delta;
+			float k = clampf(p->slide_t / 0.5f, 0.f, 1.f);
+			p->vel = p->slide_dir * (2.f + 7.5f * k);
+			p->pos += p->vel * delta;
+			if (!p->slide_won && state == PLAY) {
+				if (holder && holder->team != t && holder->protect <= 0.f && fdist(p->pos, holder->pos) < 1.45f) {
+					float chance = clampf(0.5f + ((float)p->data.def - (float)holder->data.dri) / 80.f, 0.25f, 0.9f);
+					if (randf() < chance) {
+						Footballer *loser = holder;
+						loser->stun = 0.6f;
+						loser->play_action("Hit_Chest", 0.5f);
+						loser->st.lost++;
+						p->st.tackles++;
+						holder = nullptr;
+						gk_hands = false;
+						ball_vel = (p->slide_dir + Vector3(randr(-0.4f, 0.4f), 0, randr(-0.4f, 0.4f))).normalized() * randr(5.f, 8.f);
+						last_team = t;
+						last_kicker = p;
+						tried.clear();
+						loser->kick_cd = 0.5f;
+						PMSfx::p("kick", -4.f);
+					}
+					p->slide_won = true;
+				} else if (!holder && ball_pos.y < 0.7f && fdist(p->pos, ball_ground()) < 1.2f) {
+					ball_vel = p->slide_dir * 7.f + Vector3(0, 0.6f, 0);
+					last_team = t;
+					last_kicker = p;
+					tried.clear();
+					p->slide_won = true;
+				}
+			}
+			if (p->slide_t <= 0.f) p->stun = std::max(p->stun, p->slide_won ? 0.25f : 0.5f);
+			p->pos.x = clampf(p->pos.x, -HL - 3.5f, HL + 3.5f);
+			p->pos.z = clampf(p->pos.z, -HW - 2.5f, HW + 2.5f);
+			p->pos.y = 0;
+			continue;
+		}
 		if (p->stun > 0.f) {
 			desired = Vector3();
 		} else if (hm) {
@@ -1432,8 +1583,19 @@ void PMMatch::update_ball(float delta) {
 		if (holder->rid == R_GK && gk_hands) {
 			tg = holder->pos + fwd * 0.35f + Vector3(0, 1.05f, 0);
 		} else {
-			tg = holder->pos + fwd * 0.62f;
+			// close control at walking pace, longer touches when sprinting (better dribblers keep it closer)
+			float spd = Vector2(holder->vel.x, holder->vel.z).length();
+			holder->touch_phase += delta * (2.5f + spd * 0.9f);
+			float ctrl_k = 1.15f - holder->data.dri / 200.f;
+			bool human_dribble = is_human_ctrl(holder) && state == PLAY;
+			float push = (human_dribble && spd > 4.2f) ? (0.18f + 0.32f * std::max(0.f, std::sin(holder->touch_phase))) * ctrl_k : 0.f;
+			tg = holder->pos + fwd * (human_dribble ? 0.56f + spd * 0.025f + push : 0.62f);
 			tg.y = BR;
+			// a dribbled ball never crosses a line on its own: the carrier has to take it out
+			if (std::fabs(holder->pos.x) < HL && std::fabs(holder->pos.z) < HW) {
+				tg.x = clampf(tg.x, -HL + 0.12f, HL - 0.12f);
+				tg.z = clampf(tg.z, -HW + 0.12f, HW - 0.12f);
+			}
 		}
 		ball_pos = ball_pos.lerp(tg, std::min(1.f, delta * 20.f));
 		ball_vel = holder->vel;

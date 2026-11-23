@@ -1,4 +1,5 @@
 #include "game_data.h"
+#include <godot_cpp/classes/os.hpp>
 #include <godot_cpp/classes/project_settings.hpp>
 #include <godot_cpp/classes/dir_access.hpp>
 
@@ -280,6 +281,7 @@ Dictionary GameData::to_dict() const {
 	st["sound"] = settings.sound; st["last_ip"] = settings.last_ip; st["active_patch"] = settings.active_patch;
 	st["replays"] = settings.replays;
 	st["cam_v3"] = true;
+	st["controls"] = settings.controls; st["quality"] = settings.quality; st["fps"] = settings.fps;
 	d["settings"] = st;
 	Dictionary dy;
 	dy["date"] = daily.date; dy["last_login"] = daily.last_login; dy["streak"] = daily.streak; dy["reward_claimed"] = daily.reward_claimed;
@@ -291,6 +293,7 @@ Dictionary GameData::to_dict() const {
 	}
 	dy["missions"] = ms;
 	d["daily"] = dy;
+	d["edits"] = edits;
 	Dictionary ss;
 	ss["played"] = stats.played; ss["won"] = stats.won; ss["drawn"] = stats.drawn; ss["lost"] = stats.lost;
 	ss["gf"] = stats.gf; ss["ga"] = stats.ga;
@@ -357,6 +360,11 @@ void GameData::from_dict(const Dictionary &d) {
 	settings.last_ip = ds(st, "last_ip", "192.168.43.1", 40);
 	settings.active_patch = ds(st, "active_patch", "", 80);
 	settings.replays = (bool)st.get("replays", true);
+	settings.controls = di(st, "controls", 1, 0, 2);
+	settings.quality = di(st, "quality", -1, -1, 3);
+	settings.fps = (int)st.get("fps", 60) == 30 ? 30 : 60;
+	edits = d.get("edits", Dictionary());
+	if (edits.size() > 64) edits = Dictionary();
 	Dictionary dy = d.get("daily", Dictionary());
 	daily = Daily();
 	daily.date = ds(dy, "date", "", 12);
@@ -689,7 +697,52 @@ MatchTeam GameData::build_my_team() {
 	return t;
 }
 
-MatchTeam GameData::build_ai_team(const TeamInfo &ti, int bonus) {
+// ------------------------------------------------------------------ editor
+void GameData::apply_edits(TeamInfo &t) const {
+	if (!edits.has(t.id)) return;
+	Dictionary e = edits[t.id];
+	String n = String(e.get("name", "")).strip_edges().left(28);
+	if (n.length() >= 2) t.name = n;
+	String sh = String(e.get("shrt", "")).strip_edges().to_upper().left(4);
+	if (sh.length() >= 2) t.shrt = sh;
+	String c1 = e.get("shirt", ""), c2 = e.get("shorts", "");
+	if (Color::html_is_valid(c1)) t.shirt = c1;
+	if (Color::html_is_valid(c2)) t.shorts = c2;
+	Array ps = e.get("players", Array());
+	if (!ps.is_empty()) {
+		t.players.clear();
+		for (int i = 0; i < ps.size() && i < 23; i++) t.players.push_back(Card::from_dict(ps[i]));
+	}
+}
+
+std::vector<Card> GameData::team_roster(const TeamInfo &t) const {
+	if (!t.players.empty()) return t.players;
+	std::vector<Card> out;
+	Rng r((uint64_t)t.id.hash() * 7919u + 17u);
+	const char *pos[16] = { "GK", "CB", "CB", "LB", "RB", "DMF", "CMF", "CMF", "AMF", "LWF", "RWF", "CF", "GK", "CB", "CMF", "CF" };
+	for (int i = 0; i < 16; i++) {
+		Card c = make_card(t.strength + r.irange(-4, 4), pos[i], r);
+		c.id = 0;
+		out.push_back(c);
+	}
+	return out;
+}
+
+void GameData::save_team_edit(const String &id, const Dictionary &e) {
+	edits[id] = e;
+	for (auto &t : league.teams)
+		if (t.id == id) apply_edits(t);
+	save();
+}
+
+void GameData::reset_team_edit(const String &id) {
+	edits.erase(id);
+	save();
+}
+
+MatchTeam GameData::build_ai_team(const TeamInfo &ti0, int bonus) {
+	TeamInfo ti = ti0;
+	apply_edits(ti);
 	Rng r((uint64_t)ti.name.hash() * 31u + (uint64_t)league.season);
 	MatchTeam t;
 	t.name = ti.name;
@@ -919,6 +972,12 @@ bool GameData::rename_card(int id, const String &n0) {
 	c->name = n;
 	save();
 	return true;
+}
+
+int GameData::eff_quality() const {
+	if (settings.quality >= 0) return settings.quality;
+	// auto: phones start on "medium", desktops on "high"
+	return OS::get_singleton()->has_feature("mobile") ? 1 : 2;
 }
 
 const Card *GameData::photo_card() const {

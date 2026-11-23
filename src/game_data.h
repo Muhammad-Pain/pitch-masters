@@ -72,6 +72,9 @@ struct League {
 struct Settings {
 	int difficulty = 1, minutes = 6, camera = 1;
 	bool sound = true, replays = true;
+	int controls = 1;  // 0 buttons, 1 buttons + gestures, 2 gestures (flick)
+	int quality = -1;  // -1 auto, 0 low, 1 medium, 2 high, 3 ultra
+	int fps = 60;
 	String last_ip = "192.168.43.1";
 	String active_patch;
 };
@@ -145,6 +148,7 @@ public:
 	League league;
 	PatchData patch;
 	Daily daily;
+	Dictionary edits; // editor: team id -> {name, shrt, shirt, shorts, players[]}
 	int coins_rev = 0; // bumped whenever coins change (UI polls it)
 
 	// ---- constants
@@ -179,6 +183,7 @@ public:
 	void set_card_photo(int id, const String &path);
 	bool rename_card(int id, const String &name);
 	const Card *photo_card() const; // first card with a personal photo, if any
+	int eff_quality() const;        // resolved graphics preset 0..3
 	bool is_starter(int id) const;
 	int sell_card(int id);
 	std::vector<Card> open_pack(const String &id);
@@ -231,6 +236,10 @@ public:
 	String install_example_patch(String &out_id);
 	Ref<Texture2D> logo_texture(const String &path);
 	std::vector<TeamInfo> base_team_pool() const;
+	void apply_edits(TeamInfo &t) const;
+	std::vector<Card> team_roster(const TeamInfo &t) const;
+	void save_team_edit(const String &id, const Dictionary &e);
+	void reset_team_edit(const String &id);
 	std::vector<String> board_texts() const;
 	void shutdown() { logo_cache.clear(); patch = PatchData(); }
 

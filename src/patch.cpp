@@ -57,6 +57,7 @@ std::vector<TeamInfo> GameData::base_team_pool() const {
 			out.push_back(t);
 		}
 	}
+	for (auto &t : out) apply_edits(t);
 	return out;
 }
 

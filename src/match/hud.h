@@ -27,7 +27,19 @@ class PMHud : public godot::Control {
 	int joy_index = -1;
 	Vector2 joy_center, joy_vec;
 	bool test_joy = false;
-	float shoot_hold = -1.f;
+	float shoot_hold = -1.f, press_hold = -1.f;
+	bool tpress_on = false;
+	int controls = 1; // 0 buttons, 1 buttons + gestures, 2 gestures only
+	int ges_index = -1;
+	Vector2 ges_start, ges_cur;
+	uint64_t ges_t0 = 0;
+	Vector2 fx_pos;
+	float fx_t = 0.f;
+	bool fx_swipe = false;
+	Vector2 fx_from;
+	bool screen_to_pitch(Vector2 sp, Vector3 &out) const;
+	void finish_gesture(Vector2 p);
+	bool button_visible(const String &name) const;
 	String banner_text;
 	float banner_t = 0.f;
 	Color banner_color;

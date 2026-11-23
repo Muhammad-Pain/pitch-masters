@@ -318,6 +318,23 @@ void PMSettingsScreen::_ready() {
 	OptionButton *ro = kit::option({ S("Выкл"), S("Вкл") }, g.settings.replays ? 1 : 0, 24);
 	ro->connect("item_selected", FnV(ro, [](const Variant &i) { GameData::get().settings.replays = (int)i == 1; GameData::get().save(); }));
 	row("Повтор гола", ro);
+	OptionButton *ctl = kit::option({ S("Кнопки"), S("Кнопки + жесты"), S("Жесты (пальцем)") }, g.settings.controls, 24);
+	ctl->connect("item_selected", FnV(ctl, [](const Variant &i) { GameData::get().settings.controls = (int)i; GameData::get().save(); }));
+	row("Управление", ctl);
+	OptionButton *qo = kit::option({ S("Авто"), S("Низкая"), S("Средняя"), S("Высокая"), S("Ультра") }, g.settings.quality + 1, 24);
+	qo->connect("item_selected", FnV(qo, [](const Variant &i) {
+		GameData::get().settings.quality = (int)i - 1;
+		GameData::get().save();
+		PMApp::apply_quality();
+	}));
+	row("Графика", qo);
+	OptionButton *fo = kit::option({ S("30 кадров"), S("60 кадров") }, g.settings.fps == 30 ? 0 : 1, 24);
+	fo->connect("item_selected", FnV(fo, [](const Variant &i) {
+		GameData::get().settings.fps = (int)i == 0 ? 30 : 60;
+		GameData::get().save();
+		PMApp::apply_quality();
+	}));
+	row("Частота", fo);
 	HBoxContainer *nh = kit::hbox(10);
 	LineEdit *le = memnew(LineEdit);
 	le->set_text(g.team_name);

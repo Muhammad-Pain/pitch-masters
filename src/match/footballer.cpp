@@ -1,4 +1,5 @@
 #include "footballer.h"
+#include "../game_data.h"
 
 #include <godot_cpp/classes/base_material3d.hpp>
 #include <godot_cpp/classes/bone_attachment3d.hpp>
@@ -47,7 +48,7 @@ void Footballer::setup(Node3D *parent, const KitColors &kit, int number, const R
 		if (mi) {
 			mi->set_mesh(lib.mesh);
 			mi->set_material_override(lib.material(kit));
-			mi->set_cast_shadows_setting(GeometryInstance3D::SHADOW_CASTING_SETTING_ON);
+			mi->set_cast_shadows_setting(GameData::get().eff_quality() >= 1 ? GeometryInstance3D::SHADOW_CASTING_SETTING_ON : GeometryInstance3D::SHADOW_CASTING_SETTING_OFF);
 		}
 		if (anim) {
 			anim->set_callback_mode_process(AnimationMixer::ANIMATION_CALLBACK_MODE_PROCESS_MANUAL);
@@ -175,6 +176,10 @@ void Footballer::animate(float delta, float speed) {
 		scale = clampf(speed / 6.8f, 0.8f, 1.35f);
 	}
 	if (dive_anim > 0.f) want = "Jump";
+	if (slide_anim > 0.f) {
+		want = "Sitting_Idle";
+		scale = 1.f;
+	}
 	if (want != cur_anim) {
 		anim->play(want, 0.22);
 		cur_anim = want;
@@ -213,8 +218,16 @@ void Footballer::animate(float delta, float speed) {
 		mr.x = dive_side * 1.3f * d;
 		mp.y = 0.3f * d;
 	}
+	if (slide_anim > 0.f) {
+		slide_anim -= delta;
+		// 0.9 s: drop into the slide, glide, get up
+		float t = 0.9f - slide_anim;
+		float d = t < 0.12f ? t / 0.12f : (t < 0.55f ? 1.f : clampf(1.f - (t - 0.55f) / 0.35f, 0.f, 1.f));
+		mp.y = -0.5f * d;
+		mr.z = -0.32f * d; // lean back with legs forward
+	}
 	model->set_position(mp);
-	model->set_rotation(Vector3(mr.x, (float)Math_PI * 0.5f, 0));
+	model->set_rotation(Vector3(mr.x, (float)Math_PI * 0.5f, mr.z));
 }
 
 // ------------------------------------------------------------------ capsule fallback

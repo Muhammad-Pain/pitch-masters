@@ -29,6 +29,9 @@ struct Footballer {
 	Vector3 pos, vel, target, plan;
 	float facing = 0.f, max_speed = 7.f, urgency = 0.5f, stamina = 1.f;
 	float tackle_cd = 0.f, stun = 0.f, kick_cd = 0.f, protect = 0.f, think = 0.f, hold = 0.f;
+	float slide_t = 0.f, slide_anim = 0.f, touch_phase = 0.f;
+	Vector3 slide_dir;
+	bool slide_won = false;
 	float kick_anim = 0.f, dive_anim = 0.f, dive_side = 0.f, net_facing = 0.f, anim_phase = 0.f;
 	String action; // one-off / celebration animation
 	float action_t = 0.f;

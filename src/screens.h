@@ -124,6 +124,30 @@ public:
 	void _ready() override;
 };
 
+class PMEditScreen : public PMScreen {
+	GDCLASS(PMEditScreen, PMScreen)
+	godot::VBoxContainer *list = nullptr, *form = nullptr;
+	std::vector<String> ids;
+	int current = 0;
+	std::vector<Card> roster;
+	String shirt, shorts;
+	godot::LineEdit *name_edit = nullptr, *short_edit = nullptr;
+	std::vector<godot::LineEdit *> player_edits, num_edits;
+	bool pending_refresh = false;
+	std::function<void()> refresh_fn;
+	void build_list();
+	void build_form();
+	void save_current();
+
+protected:
+	static void _bind_methods();
+
+public:
+	void _ready() override;
+	void _process(double delta) override;
+	void on_back() override;
+};
+
 class PMPatchScreen : public PMScreen {
 	GDCLASS(PMPatchScreen, PMScreen)
 	godot::VBoxContainer *list = nullptr;

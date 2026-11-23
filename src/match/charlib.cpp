@@ -142,6 +142,9 @@ uniform vec3 hair : source_color = vec3(0.1, 0.08, 0.06);
 uniform vec3 gloves : source_color = vec3(0.9);
 uniform int pattern = 0;
 uniform bool keeper = false;
+uniform int hair_style = 0;
+uniform bool beard = false;
+float hash3(vec3 p) { return fract(sin(dot(p, vec3(127.1, 311.7, 74.7))) * 43758.5453); }
 varying flat int region;
 varying vec3 bp;
 void vertex() {
@@ -152,7 +155,41 @@ void fragment() {
 	vec3 c = skin;
 	float rough = 0.72;
 	float spec = 0.35;
-	if (region == 0) {
+	// ---- head: hair line, face details (painted from the bind pose)
+	bool head = (region == 4 || region == 5) && bp.y > 1.555;
+	if (head) {
+		float ax = abs(bp.x);
+		float front = smoothstep(0.02, 0.07, bp.z);
+		float top = 1.752 - 0.03 * smoothstep(0.03, 0.09, ax);           // forehead hairline, lower at the temples
+		float back = hair_style == 2 ? 1.585 : 1.63;                       // nape
+		float h = step(top, bp.y) * front + (1.0 - front) * step(mix(back, top, smoothstep(-0.06, 0.04, bp.z)), bp.y);
+		if (hair_style == 4) h = max(h, step(1.735, bp.y));
+		float n = hash3(floor(bp * 260.0));
+		vec3 hc = hair * (0.85 + 0.3 * n);
+		if (hair_style == 1) hc = mix(skin * 0.8, hair, 0.55);
+		c = skin;
+		if (hair_style != 3) c = mix(c, hc, h);
+		else c = mix(c, skin * 0.92, h);
+		if (front > 0.5 && bp.y < 1.75) {
+			vec2 f = vec2(ax, bp.y);
+			float eye = 1.0 - smoothstep(0.008, 0.012, length((f - vec2(0.036, 1.697)) * vec2(1.0, 1.7)));
+			float pupil = 1.0 - smoothstep(0.0035, 0.0055, length(f - vec2(0.036, 1.696)));
+			float brow = (1.0 - smoothstep(0.003, 0.006, abs(f.y - (1.719 + (f.x - 0.036) * 0.12)))) * step(0.016, f.x) * step(f.x, 0.058);
+			float nose = (1.0 - smoothstep(0.0, 0.012, abs(f.x - 0.008))) * smoothstep(1.645, 1.66, f.y) * (1.0 - smoothstep(1.67, 1.69, f.y));
+			float mouth = (1.0 - smoothstep(0.0025, 0.005, abs(f.y - 1.628 + f.x * f.x * 6.0))) * step(f.x, 0.024);
+			float socket = 1.0 - smoothstep(0.012, 0.03, length((f - vec2(0.036, 1.70)) * vec2(1.0, 1.4)));
+			c *= 1.0 - 0.12 * socket;
+			c *= 1.0 - 0.15 * nose;
+			c = mix(c, vec3(0.92, 0.9, 0.88), eye * 0.85);
+			c = mix(c, vec3(0.05, 0.04, 0.035), pupil);
+			c = mix(c, hair * 0.8, brow * 0.9);
+			c = mix(c, skin * vec3(0.62, 0.42, 0.4), mouth * 0.85);
+			if (beard) c = mix(c, hair * 0.9, (1.0 - smoothstep(1.62, 1.655, f.y)) * 0.75 * smoothstep(0.012, 0.03, length(f - vec2(0.0, 1.628)) + 0.02));
+		}
+		rough = 0.65;
+	}
+	if (head) {
+	} else if (region == 0) {
 		c = shirt;
 		float s = 0.0;
 		if (pattern == 1) s = step(0.5, fract(bp.x * 7.0 + 0.25));
@@ -160,13 +197,35 @@ void fragment() {
 		else if (pattern == 3) s = step(abs(bp.x + (bp.y - 1.2) * 0.9), 0.07);
 		else if (pattern == 4) s = step(0.0, bp.x);
 		c = mix(c, shirt2, s);
+		// crest on the left chest + V collar
+		float crest = 1.0 - smoothstep(0.018, 0.024, length(vec2(bp.x - 0.08, bp.y - 1.33)));
+		c = mix(c, shirt2, crest * step(0.06, bp.z));
+		float vneck = step(0.02, bp.z) * (1.0 - smoothstep(0.004, 0.009, abs(abs(bp.x) - (1.47 - bp.y) * 0.5))) * step(1.415, bp.y) * step(abs(bp.x), 0.04);
+		c = mix(c, shirt2, vneck);
+		// sleeve cuffs
+		c = mix(c, shirt2, step(0.315, abs(bp.x)) * step(abs(bp.x), 0.335));
 		rough = 0.6;
-	} else if (region == 1) { c = shorts; rough = 0.62; }
-	else if (region == 2) { c = socks; rough = 0.8; }
-	else if (region == 3) { c = boots; rough = 0.25; spec = 0.6; }
+	} else if (region == 1) {
+		c = shorts;
+		float side = 1.0 - smoothstep(0.008, 0.014, abs(abs(bp.x) - 0.15));
+		c = mix(c, shirt, side * step(abs(bp.z), 0.05) * 0.9);
+		rough = 0.62;
+	} else if (region == 2) {
+		c = socks;
+		c = mix(c, shirt2, step(0.40, bp.y) * step(bp.y, 0.425));
+		rough = 0.8;
+	} else if (region == 3) {
+		c = boots;
+		float stripe = step(0.5, fract((bp.y + bp.z * 0.6) * 38.0)) * step(0.045, abs(bp.x - sign(bp.x) * 0.1)) * step(bp.y, 0.09) * step(0.03, bp.y);
+		c = mix(c, vec3(0.95), stripe * 0.8);
+		rough = 0.25;
+		spec = 0.6;
+	}
 	else if (region == 5) { c = hair; rough = 0.9; spec = 0.1; }
 	else if (region == 6) { c = shirt2; rough = 0.6; }
 	else if (region == 7) { c = keeper ? gloves : skin; }
+	// subtle fabric / skin grain so surfaces are not flat plastic
+	c *= 0.95 + 0.07 * hash3(floor(bp * 420.0));
 	ALBEDO = c;
 	ROUGHNESS = rough;
 	SPECULAR = spec;
@@ -191,6 +250,8 @@ Ref<ShaderMaterial> CharLib::material(const KitColors &k) const {
 	m->set_shader_parameter("gloves", k.gloves);
 	m->set_shader_parameter("pattern", k.pattern);
 	m->set_shader_parameter("keeper", k.keeper);
+	m->set_shader_parameter("hair_style", k.hair_style);
+	m->set_shader_parameter("beard", k.beard);
 	return m;
 }
 
@@ -210,7 +271,7 @@ KitColors CharLib::team_kit(Color shirt, Color shorts, int seed) {
 }
 
 Color CharLib::skin_tone(int i) {
-	static const Color t[6] = { Color(0.95f, 0.8f, 0.68f), Color(0.88f, 0.69f, 0.53f), Color(0.78f, 0.57f, 0.41f), Color(0.62f, 0.43f, 0.3f),
+	static const Color t[6] = { Color(0.86f, 0.68f, 0.56f), Color(0.8f, 0.6f, 0.45f), Color(0.72f, 0.52f, 0.37f), Color(0.6f, 0.41f, 0.28f),
 		Color(0.45f, 0.3f, 0.21f), Color(0.33f, 0.22f, 0.16f) };
 	return t[((i % 6) + 6) % 6];
 }

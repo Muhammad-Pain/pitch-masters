@@ -15,6 +15,8 @@ struct KitColors {
 	Color boots = Color(0.08f, 0.08f, 0.1f), skin = Color(0.9f, 0.75f, 0.6f), hair = Color(0.1f, 0.08f, 0.06f), gloves = Color(0.9f, 0.9f, 0.9f);
 	int pattern = 0; // 0 plain, 1 stripes, 2 hoops, 3 sash, 4 halves
 	bool keeper = false;
+	int hair_style = 0; // 0 short, 1 buzz, 2 longer, 3 shaved, 4 curly top
+	bool beard = false;
 };
 
 class CharLib {
