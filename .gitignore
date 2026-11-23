@@ -1,0 +1,19 @@
+# build outputs
+godot-cpp/
+build/
+.sconsign.dblite
+*.os
+*.o
+*.obj
+game/bin/*.so
+game/bin/*.dll
+game/bin/*.dylib
+game/bin/*.lib
+game/bin/*.exp
+# Godot cache
+game/.godot/
+*.import.tmp
+# signing keys never go into git
+*.keystore
+*.jks
+*.p12

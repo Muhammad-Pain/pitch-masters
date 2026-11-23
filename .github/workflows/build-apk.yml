@@ -1,0 +1,148 @@
+name: Build APK
+
+on:
+  push:
+    branches: [main]
+    paths-ignore: ["**.md"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  GODOT_VERSION: "4.6.2"
+  GODOT_CPP_COMMIT: "27d9dd23c83871e0619fca5dc2cddfbfd69e926a" # branch 4.5
+  NDK_VERSION: "28.1.13356709"
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Install SCons
+        run: pip install scons
+
+      - name: Fetch godot-cpp
+        run: |
+          git init godot-cpp
+          git -C godot-cpp fetch --depth 1 https://github.com/godotengine/godot-cpp "$GODOT_CPP_COMMIT"
+          git -C godot-cpp checkout FETCH_HEAD
+
+      - name: Cache godot-cpp build
+        uses: actions/cache@v4
+        with:
+          path: godot-cpp/bin
+          key: godot-cpp-${{ env.GODOT_CPP_COMMIT }}-${{ env.NDK_VERSION }}-v1
+
+      - name: Install Android NDK and build tools
+        run: |
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "ndk;$NDK_VERSION" "build-tools;35.0.0" "platform-tools" > /dev/null
+
+      - name: Build C++ (Android arm64 + arm32, Linux for the editor)
+        run: |
+          J=$(nproc)
+          scons platform=android arch=arm64 target=template_release ndk_version="$NDK_VERSION" -j$J
+          scons platform=android arch=arm32 target=template_release ndk_version="$NDK_VERSION" -j$J
+          scons platform=linux target=template_debug -j$J
+          ls -la game/bin
+
+      - name: Cache Godot and export templates
+        id: godot-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/godot-dl
+          key: godot-${{ env.GODOT_VERSION }}-v1
+
+      - name: Download Godot and export templates
+        if: steps.godot-cache.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p ~/godot-dl && cd ~/godot-dl
+          base="https://github.com/godotengine/godot/releases/download/${GODOT_VERSION}-stable"
+          curl -fsSL -o godot.zip "$base/Godot_v${GODOT_VERSION}-stable_linux.x86_64.zip"
+          curl -fsSL -o templates.tpz "$base/Godot_v${GODOT_VERSION}-stable_export_templates.tpz"
+
+      - name: Install Godot
+        run: |
+          cd ~/godot-dl
+          unzip -oq godot.zip
+          mv -f "Godot_v${GODOT_VERSION}-stable_linux.x86_64" ~/godot
+          tdir=~/.local/share/godot/export_templates/${GODOT_VERSION}.stable
+          mkdir -p "$tdir"
+          unzip -oq templates.tpz -d ~/tpl
+          mv -f ~/tpl/templates/* "$tdir/"
+          mkdir -p ~/.config/godot
+          cat > ~/.config/godot/editor_settings-4.6.tres <<EOT
+          [gd_resource type="EditorSettings" format=3]
+
+          [resource]
+          export/android/android_sdk_path = "$ANDROID_HOME"
+          export/android/java_sdk_path = "$JAVA_HOME"
+          EOT
+          sed -i 's/^ *//' ~/.config/godot/editor_settings-4.6.tres
+
+      - name: Signing key
+        env:
+          KS_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KS_PASS: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KS_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+        run: |
+          if [ -n "$KS_B64" ]; then
+            echo "$KS_B64" | base64 -d > "$RUNNER_TEMP/release.keystore"
+            echo "KS_PASS=$KS_PASS" >> "$GITHUB_ENV"
+            echo "KS_ALIAS=${KS_ALIAS:-pitchmasters}" >> "$GITHUB_ENV"
+            echo "Using the keystore from repository secrets"
+          else
+            echo "::warning::No ANDROID_KEYSTORE_BASE64 secret: signing with a temporary key. Uninstall the old build before installing this one."
+            keytool -genkeypair -v -keystore "$RUNNER_TEMP/release.keystore" -storetype PKCS12 -alias pitchmasters \
+              -keyalg RSA -keysize 2048 -validity 10000 -storepass temp-pass -keypass temp-pass \
+              -dname "CN=Pitch Masters, O=Pitch Masters" > /dev/null
+            echo "KS_PASS=temp-pass" >> "$GITHUB_ENV"
+            echo "KS_ALIAS=pitchmasters" >> "$GITHUB_ENV"
+          fi
+
+      - name: Export APK
+        run: |
+          cd game
+          code=$((GITHUB_RUN_NUMBER + 10))
+          sed -i "s/^version\/code=.*/version\/code=$code/" export_presets.cfg
+          export GODOT_ANDROID_KEYSTORE_RELEASE_PATH="$RUNNER_TEMP/release.keystore"
+          export GODOT_ANDROID_KEYSTORE_RELEASE_USER="$KS_ALIAS"
+          export GODOT_ANDROID_KEYSTORE_RELEASE_PASSWORD="$KS_PASS"
+          ~/godot --headless --import --path . || true
+          mkdir -p ../build
+          ~/godot --headless --path . --export-release "Android" ../build/PitchMasters.apk
+          ls -la ../build
+          test -s ../build/PitchMasters.apk
+
+      - name: Quick AI-vs-AI simulation (smoke test)
+        run: |
+          cd game
+          timeout 300 ~/godot --headless --fixed-fps 60 res://tests/sim.tscn -- 1 | grep -E "SIM" || (echo "simulation failed" && exit 1)
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: PitchMasters-apk
+          path: build/PitchMasters.apk
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: build-${{ github.run_number }}
+          name: Pitch Masters — сборка ${{ github.run_number }}
+          body: |
+            APK собран автоматически из коммита ${{ github.sha }}.
+            Скачайте **PitchMasters.apk** ниже и установите на телефон (Android 7+).
+          files: build/PitchMasters.apk
+          make_latest: true
