@@ -141,7 +141,7 @@ void PMMatch::make_materials() {
 	shadow_mat.instantiate();
 	Ref<Gradient> gr;
 	gr.instantiate();
-	gr->set_color(0, Color(0, 0, 0, 0.35f));
+	gr->set_color(0, Color(0, 0, 0, 0.5f));
 	gr->set_color(1, Color(0, 0, 0, 0.0f));
 	Ref<GradientTexture2D> gt;
 	gt.instantiate();
@@ -676,7 +676,7 @@ void PMMatch::update_markers(const int *c, const bool *a) {
 void PMMatch::update_camera(float delta) {
 	Vector3 b = ball_pos;
 	bool close = GameData::get().settings.camera == 1;
-	float dz = close ? 30.f : 42.f, h = close ? 11.5f : 16.f;
+	float dz = close ? 27.f : 35.f, h = close ? 10.5f : 13.5f;
 	float lim = HL - (close ? 12.f : 18.f);
 	float side = view_side();
 	// look a little ahead of the ball in the direction of play

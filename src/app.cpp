@@ -32,16 +32,35 @@ void PMApp::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("show_screen", "name", "params"), &PMApp::show_screen);
 	ClassDB::bind_method(D_METHOD("get_current"), &PMApp::get_current);
 	ClassDB::bind_method(D_METHOD("debug_info"), &PMApp::debug_info);
+	ClassDB::bind_method(D_METHOD("debug_photo", "card_id", "path", "open_crop"), &PMApp::debug_photo);
 	ClassDB::bind_method(D_METHOD("debug_list_patches"), &PMApp::debug_list_patches);
 	ClassDB::bind_method(D_METHOD("debug_install_patch", "path"), &PMApp::debug_install_patch);
 	ClassDB::bind_method(D_METHOD("debug_activate_patch", "id"), &PMApp::debug_activate_patch);
 	ClassDB::bind_method(D_METHOD("debug_install_example"), &PMApp::debug_install_example);
 }
 
+bool PMApp::debug_photo(int card_id, const String &path, bool open_crop) {
+	Ref<Image> img = kit::image_from_file(path);
+	if (img.is_null()) return false;
+	if (open_crop) {
+		Control *host = Object::cast_to<Control>(current);
+		if (!host) return false;
+		kit::crop_photo(host, card_id, img, nullptr);
+		return true;
+	}
+	int side = std::min(img->get_width(), img->get_height());
+	Ref<Image> sq = img->get_region(Rect2i((img->get_width() - side) / 2, (img->get_height() - side) / 2, side, side));
+	String p = kit::save_photo(card_id, sq);
+	if (p.is_empty()) return false;
+	GameData::get().set_card_photo(card_id, p);
+	return true;
+}
+
 Dictionary PMApp::debug_info() const {
 	GameData &g = GameData::get();
 	Dictionary d;
 	d["coins"] = g.coins;
+	if (!g.cards.empty()) d["first_card_id"] = g.squad.slots.empty() ? g.cards[0].id : g.squad.slots[g.squad.slots.size() - 1];
 	d["cards"] = (int)g.cards.size();
 	d["team_name"] = g.team_name;
 	d["league_name"] = g.league.name;

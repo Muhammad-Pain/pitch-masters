@@ -45,6 +45,7 @@ public:
 	void rebuild_backdrop();
 	// debug / test helpers (bound to scripting)
 	godot::Dictionary debug_info() const;
+	bool debug_photo(int card_id, const String &path, bool open_crop);
 	godot::Array debug_list_patches() const;
 	String debug_install_patch(const String &path);
 	String debug_activate_patch(const String &id);

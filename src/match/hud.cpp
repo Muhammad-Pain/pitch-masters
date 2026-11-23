@@ -361,6 +361,18 @@ void PMHud::_draw() {
 			}
 		}
 	}
+	// ---- your own player (card with a personal photo) under the scoreboard
+	if (mine && !mine->data.photo.is_empty() && !m->replay) {
+		Ref<Texture2D> ph = kit::photo_tex(mine->data.photo);
+		if (ph.is_valid()) {
+			Vector2 o(18, 76);
+			float nw = bold->get_string_size(mine->data.name, HORIZONTAL_ALIGNMENT_LEFT, -1, 20).x;
+			rrect(Rect2(o, Vector2(66 + nw + 18, 56)), glass, 28, Color(kit::LIME, 0.6f), 1.5f);
+			draw_texture_rect(ph, Rect2(o + Vector2(4, 4), Vector2(48, 48)), false);
+			draw_arc(o + Vector2(28, 28), 24, 0, Math_TAU, 32, kit::LIME, 2.f, true);
+			draw_string(bold, o + Vector2(62, 35), mine->data.name, HORIZONTAL_ALIGNMENT_LEFT, -1, 20, Color(1, 1, 1));
+		}
+	}
 	// ---- top-right: AUTO pill + pause
 	Rect2 ar = auto_rect();
 	rrect(ar, on ? Color(0.13f, 0.77f, 0.37f, 0.92f) : glass, 26, on ? Color::html("86efac") : Color(1, 1, 1, 0.18f), 1.5f);

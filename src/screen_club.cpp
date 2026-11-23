@@ -117,7 +117,30 @@ void PMSquadScreen::build() {
 		Card *c = g.card_by_id(g.squad.slots[selected]);
 		hint = S("Замена: ") + GameData::pos_ru(slot_pos) + " (" + (c ? c->name : String()) + S(") — выберите игрока");
 	}
-	right->add_child(kit::label(hint, 20, kit::ACCENT));
+	if (selected >= 0 && g.card_by_id(g.squad.slots[selected])) {
+		Card *sc = g.card_by_id(g.squad.slots[selected]);
+		int scid = sc->id;
+		PanelContainer *pp = kit::glass(10);
+		HBoxContainer *ph = kit::hbox(12);
+		ph->add_child(kit::portrait(*sc, 64, GameData::rarity_color(GameData::rarity(sc->ovr))));
+		VBoxContainer *pv = kit::vbox(-4);
+		pv->set_h_size_flags(SIZE_EXPAND_FILL);
+		Label *pn = kit::label(sc->name, 22, kit::TEXT);
+		pn->add_theme_font_override("font", kit::font_bold());
+		pv->add_child(pn);
+		pv->add_child(kit::label(S("Замена: выберите игрока ниже"), 16, kit::ACCENT));
+		ph->add_child(pv);
+		Button *pb = kit::button(sc->photo.is_empty() ? S("Своё фото") : S("Сменить фото"), Color(0.13f, 0.5f, 0.3f), 19, Vector2(150, 52));
+		pb->connect("pressed", Fn(pb, [this, scid] { kit::pick_photo(this, scid, [this] { build(); }); }));
+		ph->add_child(pb);
+		Button *nb = kit::button(S("Имя"), kit::PANEL2, 19, Vector2(90, 52));
+		nb->connect("pressed", Fn(nb, [this, scid] { kit::rename_dialog(this, scid, [this] { build(); }); }));
+		ph->add_child(nb);
+		pp->add_child(ph);
+		right->add_child(pp);
+	} else {
+		right->add_child(kit::label(hint, 20, kit::ACCENT));
+	}
 	ScrollContainer *scroll = memnew(ScrollContainer);
 	scroll->set_v_size_flags(SIZE_EXPAND_FILL);
 	scroll->set_horizontal_scroll_mode(ScrollContainer::SCROLL_MODE_DISABLED);
@@ -167,6 +190,12 @@ Control *PMSquadScreen::slot_chip(int i, const String &pos) {
 	if (c.lvl > 0) top->add_child(kit::label(S("ур") + I(c.lvl), 13, kit::LIME));
 	top->add_child(kit::label(GameData::pos_ru(pos), 18, col.lightened(0.3f)));
 	v->add_child(top);
+	if (!c.photo.is_empty()) {
+		CenterContainer *pc = memnew(CenterContainer);
+		pc->set_mouse_filter(MOUSE_FILTER_IGNORE);
+		pc->add_child(kit::portrait(c, 44, col));
+		v->add_child(pc);
+	}
 	PackedStringArray parts = c.name.split(" ");
 	Label *n = kit::label(parts.size() ? parts[parts.size() - 1] : c.name, 17, kit::TEXT, HORIZONTAL_ALIGNMENT_CENTER);
 	n->set_clip_text(true);
@@ -381,6 +410,38 @@ void PMPacksScreen::card_dialog(int cid) {
 		info->add_child(kit::label(GameData::stat_ru(k) + ": " + I(c.stat(k)), 20, kit::TEXT));
 	h->add_child(info);
 	v->add_child(h);
+	HBoxContainer *prow = kit::hbox(12);
+	Button *pb = kit::button(c.photo.is_empty() ? S("Поставить своё фото") : S("Сменить фото"), Color(0.13f, 0.5f, 0.3f), 22);
+	pb->set_h_size_flags(SIZE_EXPAND_FILL);
+	pb->connect("pressed", Fn(pb, [this, v, cid] {
+		kit::close_modal(v);
+		kit::pick_photo(this, cid, [this, cid] {
+			build();
+			card_dialog(cid);
+		});
+	}));
+	prow->add_child(pb);
+	Button *nb = kit::button(S("Изменить имя"), kit::PANEL2, 22);
+	nb->set_h_size_flags(SIZE_EXPAND_FILL);
+	nb->connect("pressed", Fn(nb, [this, v, cid] {
+		kit::close_modal(v);
+		kit::rename_dialog(this, cid, [this, cid] {
+			build();
+			card_dialog(cid);
+		});
+	}));
+	prow->add_child(nb);
+	if (!c.photo.is_empty()) {
+		Button *rb = kit::button(S("Убрать фото"), kit::RED.darkened(0.3f), 22);
+		rb->connect("pressed", Fn(rb, [this, v, cid] {
+			GameData::get().set_card_photo(cid, String());
+			kit::close_modal(v);
+			build();
+			card_dialog(cid);
+		}));
+		prow->add_child(rb);
+	}
+	v->add_child(prow);
 	HBoxContainer *row = kit::hbox(12);
 	Button *close = kit::button(S("Закрыть"), kit::PANEL2, 24);
 	close->set_h_size_flags(SIZE_EXPAND_FILL);

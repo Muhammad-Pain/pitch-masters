@@ -1,4 +1,6 @@
 #include "game_data.h"
+#include <godot_cpp/classes/project_settings.hpp>
+#include <godot_cpp/classes/dir_access.hpp>
 
 #include <godot_cpp/classes/file_access.hpp>
 #include <godot_cpp/classes/json.hpp>
@@ -136,6 +138,7 @@ Dictionary Card::to_dict() const {
 	d["id"] = id; d["name"] = name; d["pos"] = pos; d["ovr"] = ovr; d["pace"] = pace; d["sho"] = sho;
 	d["pas"] = pas; d["dri"] = dri; d["def"] = def; d["phy"] = phy; d["gk"] = gk; d["num"] = num;
 	d["lvl"] = lvl; d["xp"] = xp;
+	if (!photo.is_empty()) d["photo"] = photo;
 	return d;
 }
 
@@ -172,6 +175,8 @@ Card Card::from_dict(const Dictionary &d) {
 	c.num = di(d, "num", 10, 1, 99);
 	c.lvl = di(d, "lvl", 0, 0, 10);
 	c.xp = di(d, "xp", 0, 0, 100000);
+	String ph = ds(d, "photo", "", 120);
+	if (ph.begins_with("user://photos/") && !ph.contains("..") && FileAccess::file_exists(ph)) c.photo = ph;
 	return c;
 }
 
@@ -274,6 +279,7 @@ Dictionary GameData::to_dict() const {
 	st["difficulty"] = settings.difficulty; st["minutes"] = settings.minutes; st["camera"] = settings.camera;
 	st["sound"] = settings.sound; st["last_ip"] = settings.last_ip; st["active_patch"] = settings.active_patch;
 	st["replays"] = settings.replays;
+	st["cam_v3"] = true;
 	d["settings"] = st;
 	Dictionary dy;
 	dy["date"] = daily.date; dy["last_login"] = daily.last_login; dy["streak"] = daily.streak; dy["reward_claimed"] = daily.reward_claimed;
@@ -346,6 +352,7 @@ void GameData::from_dict(const Dictionary &d) {
 	settings.difficulty = di(st, "difficulty", 1, 0, 2);
 	settings.minutes = di(st, "minutes", 6, 2, 20);
 	settings.camera = di(st, "camera", 1, 0, 1);
+	if (!st.has("cam_v3")) settings.camera = 1; // 3.1: everyone starts on the closer camera once
 	settings.sound = (bool)st.get("sound", true);
 	settings.last_ip = ds(st, "last_ip", "192.168.43.1", 40);
 	settings.active_patch = ds(st, "active_patch", "", 80);
@@ -893,6 +900,31 @@ int GameData::record_result(int gf, int ga, const String &mode) {
 	int c = match_reward(gf, ga, mode);
 	add_coins(c);
 	return c;
+}
+
+// ------------------------------------------------------------------ personal photos
+void GameData::set_card_photo(int id, const String &path) {
+	Card *c = card_by_id(id);
+	if (!c) return;
+	if (!c->photo.is_empty() && c->photo != path && FileAccess::file_exists(c->photo))
+		DirAccess::remove_absolute(ProjectSettings::get_singleton()->globalize_path(c->photo));
+	c->photo = path;
+	save();
+}
+
+bool GameData::rename_card(int id, const String &n0) {
+	Card *c = card_by_id(id);
+	String n = n0.strip_edges().replace("\n", " ").left(22);
+	if (!c || n.length() < 2) return false;
+	c->name = n;
+	save();
+	return true;
+}
+
+const Card *GameData::photo_card() const {
+	for (auto &c : cards)
+		if (!c.photo.is_empty()) return &c;
+	return nullptr;
 }
 
 // ------------------------------------------------------------------ daily

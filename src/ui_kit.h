@@ -28,6 +28,14 @@ godot::PanelContainer *glass(float margin = 18);
 godot::Button *primary(const String &text, int font_size = 26);
 godot::Ref<godot::Font> font_bold();
 void release_fonts();
+// ---- personal photos on cards
+godot::Ref<godot::Texture2D> photo_tex(const String &path); // round-masked, cached
+godot::Control *portrait(const Card &c, float size, Color ring);
+void pick_photo(godot::Control *host, int card_id, std::function<void()> done);
+void crop_photo(godot::Control *host, int card_id, const godot::Ref<godot::Image> &img, std::function<void()> done);
+godot::Ref<godot::Image> image_from_file(const String &path);
+String save_photo(int card_id, const godot::Ref<godot::Image> &square);
+void rename_dialog(godot::Control *host, int card_id, std::function<void()> done);
 godot::Control *stat_bar(const String &name, int a, int b, bool percent);
 godot::Control *progress(float frac, Color c, float h = 8);
 void fade_in(godot::Control *c, float delay = 0.f);

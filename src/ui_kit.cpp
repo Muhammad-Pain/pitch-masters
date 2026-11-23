@@ -15,6 +15,19 @@
 #include <godot_cpp/classes/interval_tweener.hpp>
 #include <godot_cpp/classes/callback_tweener.hpp>
 #include <godot_cpp/classes/property_tweener.hpp>
+#include <map>
+#include <memory>
+#include <godot_cpp/classes/time.hpp>
+#include <godot_cpp/classes/os.hpp>
+#include <godot_cpp/classes/input_event_magnify_gesture.hpp>
+#include <godot_cpp/classes/input_event_mouse_motion.hpp>
+#include <godot_cpp/classes/line_edit.hpp>
+#include <godot_cpp/classes/h_slider.hpp>
+#include <godot_cpp/classes/image_texture.hpp>
+#include <godot_cpp/classes/image.hpp>
+#include <godot_cpp/classes/dir_access.hpp>
+#include <godot_cpp/classes/file_access.hpp>
+#include <godot_cpp/classes/file_dialog.hpp>
 #include <godot_cpp/classes/font_file.hpp>
 #include <godot_cpp/classes/font_variation.hpp>
 #include <godot_cpp/classes/gradient.hpp>
@@ -137,7 +150,295 @@ Button *primary(const String &text, int fs) {
 }
 
 static Ref<FontVariation> g_bold;
-void release_fonts() { g_bold.unref(); }
+static std::map<String, Ref<ImageTexture>> g_photos;
+void release_fonts() {
+	g_bold.unref();
+	g_photos.clear();
+}
+
+Ref<Texture2D> photo_tex(const String &path) {
+	if (path.is_empty()) return Ref<Texture2D>();
+	auto it = g_photos.find(path);
+	if (it != g_photos.end()) return it->second;
+	Ref<Image> img = Image::load_from_file(path);
+	if (img.is_null() || img->is_empty()) return Ref<Texture2D>();
+	img->convert(Image::FORMAT_RGBA8);
+	int w = img->get_width(), h = img->get_height();
+	float r = std::min(w, h) * 0.5f;
+	Vector2 c(w * 0.5f, h * 0.5f);
+	for (int y = 0; y < h; y++)
+		for (int x = 0; x < w; x++) {
+			float d = Vector2(x + 0.5f, y + 0.5f).distance_to(c);
+			float a = clampf(r - d, 0.f, 1.f);
+			if (a < 1.f) {
+				Color px = img->get_pixel(x, y);
+				px.a *= a;
+				img->set_pixel(x, y, px);
+			}
+		}
+	img->generate_mipmaps();
+	Ref<ImageTexture> t = ImageTexture::create_from_image(img);
+	g_photos[path] = t;
+	return t;
+}
+
+Control *portrait(const Card &c, float size, Color ring) {
+	Control *p = memnew(Control);
+	p->set_custom_minimum_size(Vector2(size, size));
+	p->set_mouse_filter(Control::MOUSE_FILTER_IGNORE);
+	Ref<Texture2D> tex = photo_tex(c.photo);
+	p->connect("draw", Fn(p, [p, tex, ring] {
+		Vector2 s = p->get_size();
+		float d = std::min(s.x, s.y);
+		Vector2 o((s.x - d) * 0.5f, (s.y - d) * 0.5f);
+		Vector2 ctr = o + Vector2(d, d) * 0.5f;
+		if (tex.is_valid()) {
+			p->draw_circle(ctr, d * 0.5f, Color(0.05f, 0.08f, 0.16f));
+			p->draw_texture_rect(tex, Rect2(o, Vector2(d, d)), false);
+		} else {
+			// generic silhouette: head and shoulders
+			p->draw_circle(ctr, d * 0.5f, Color(ring.darkened(0.55f), 0.9f));
+			Color sil = Color(ring.lightened(0.15f), 0.55f);
+			p->draw_circle(ctr + Vector2(0, -d * 0.1f), d * 0.17f, sil);
+			PackedVector2Array body;
+			int n = 16;
+			for (int i = 0; i <= n; i++) {
+				float a = Math_PI + Math_PI * i / n;
+				body.push_back(ctr + Vector2(std::cos(a) * d * 0.3f, d * 0.36f + std::sin(a) * d * 0.22f));
+			}
+			// clip the shoulders to the circle by keeping them inside the bottom
+			p->draw_colored_polygon(body, sil);
+		}
+		p->draw_arc(ctr, d * 0.5f - 1.f, 0, Math_TAU, 48, ring, 2.f, true);
+	}));
+	return p;
+}
+
+Ref<Image> image_from_file(const String &path) {
+	PackedByteArray b = FileAccess::get_file_as_bytes(path);
+	Ref<Image> img;
+	img.instantiate();
+	Error e = ERR_FILE_UNRECOGNIZED;
+	if (b.size() > 12) {
+		const uint8_t *d = b.ptr();
+		if (d[0] == 0x89 && d[1] == 'P' && d[2] == 'N' && d[3] == 'G') e = img->load_png_from_buffer(b);
+		else if (d[0] == 0xFF && d[1] == 0xD8) e = img->load_jpg_from_buffer(b);
+		else if (d[0] == 'R' && d[1] == 'I' && d[2] == 'F' && d[3] == 'F' && d[8] == 'W' && d[9] == 'E') e = img->load_webp_from_buffer(b);
+		else if (d[0] == 'B' && d[1] == 'M') e = img->load_bmp_from_buffer(b);
+	}
+	if (e != OK) {
+		Ref<Image> f = Image::load_from_file(path);
+		if (f.is_valid() && !f->is_empty()) return f;
+		return Ref<Image>();
+	}
+	return img;
+}
+
+String save_photo(int card_id, const Ref<Image> &square) {
+	DirAccess::make_dir_recursive_absolute("user://photos");
+	Ref<Image> out = square->duplicate();
+	out->convert(Image::FORMAT_RGB8);
+	out->resize(320, 320, Image::INTERPOLATE_LANCZOS);
+	String path = "user://photos/card_" + I(card_id) + "_" + String::num_int64((int64_t)Time::get_singleton()->get_ticks_msec() + (int64_t)Time::get_singleton()->get_unix_time_from_system() % 100000) + ".png";
+	if (out->save_png(path) != OK) return String();
+	return path;
+}
+
+void crop_photo(Control *host, int card_id, const Ref<Image> &src, std::function<void()> done) {
+	struct St {
+		Ref<Image> img;
+		Ref<ImageTexture> tex;
+		float zoom = 1.f;
+		Vector2 pan;
+		bool drag = false;
+	};
+	auto st = std::make_shared<St>();
+	st->img = src->duplicate();
+	st->img->convert(Image::FORMAT_RGB8);
+	int mx = std::max(st->img->get_width(), st->img->get_height());
+	if (mx > 1600) {
+		float k = 1600.f / mx;
+		st->img->resize(std::max(1, (int)(st->img->get_width() * k)), std::max(1, (int)(st->img->get_height() * k)), Image::INTERPOLATE_BILINEAR);
+	}
+	st->tex = ImageTexture::create_from_image(st->img);
+	const float V = 360.f;
+	VBoxContainer *v = modal(host, 620);
+	Label *t = label(S("Фото на карточку"), 30, TEXT, HORIZONTAL_ALIGNMENT_CENTER);
+	t->add_theme_font_override("font", font_bold());
+	v->add_child(t);
+	v->add_child(label(S("Передвиньте фото пальцем, чтобы лицо было в круге"), 18, MUTED, HORIZONTAL_ALIGNMENT_CENTER));
+	CenterContainer *cc = memnew(CenterContainer);
+	v->add_child(cc);
+	Control *view = memnew(Control);
+	view->set_custom_minimum_size(Vector2(V, V));
+	view->set_clip_contents(true);
+	view->set_mouse_filter(Control::MOUSE_FILTER_STOP);
+	cc->add_child(view);
+	auto layout = [st, V](Vector2 &pos, float &s) {
+		float w = (float)st->img->get_width(), h = (float)st->img->get_height();
+		s = V / std::min(w, h) * st->zoom;
+		float ex = std::max(0.f, (w * s - V) * 0.5f), ey = std::max(0.f, (h * s - V) * 0.5f);
+		st->pan.x = clampf(st->pan.x, -ex, ex);
+		st->pan.y = clampf(st->pan.y, -ey, ey);
+		pos = Vector2(V, V) * 0.5f + st->pan - Vector2(w, h) * s * 0.5f;
+	};
+	view->connect("draw", Fn(view, [view, st, layout, V] {
+		Vector2 pos;
+		float s;
+		layout(pos, s);
+		view->draw_texture_rect(st->tex, Rect2(pos, Vector2((float)st->img->get_width(), (float)st->img->get_height()) * s), false);
+		// dim the corners outside the circle
+		Vector2 c(V * 0.5f, V * 0.5f);
+		float r = V * 0.5f;
+		const int n = 48;
+		for (int q = 0; q < 4; q++) {
+			float a0 = Math_PI * 0.5f * q;
+			Vector2 corner = c + Vector2(q == 0 || q == 3 ? r : -r, q < 2 ? r : -r);
+			PackedVector2Array poly;
+			poly.push_back(corner);
+			for (int i = 0; i <= n / 4; i++) {
+				float a = a0 + Math_PI * 0.5f * i / (n / 4);
+				poly.push_back(c + Vector2(std::cos(a), std::sin(a)) * r);
+			}
+			view->draw_colored_polygon(poly, Color(0, 0, 0, 0.55f));
+		}
+		view->draw_arc(c, r - 1.5f, 0, Math_TAU, 64, Color(1, 1, 1, 0.9f), 3.f, true);
+	}));
+	view->connect("gui_input", FnV(view, [view, st](const Variant &ev) {
+		Ref<InputEventMouseButton> mb = ev;
+		if (mb.is_valid()) {
+			if (mb->get_button_index() == MOUSE_BUTTON_LEFT) st->drag = mb->is_pressed();
+			else if (mb->is_pressed() && mb->get_button_index() == MOUSE_BUTTON_WHEEL_UP) st->zoom = clampf(st->zoom * 1.1f, 1.f, 4.f);
+			else if (mb->is_pressed() && mb->get_button_index() == MOUSE_BUTTON_WHEEL_DOWN) st->zoom = clampf(st->zoom / 1.1f, 1.f, 4.f);
+			view->queue_redraw();
+			return;
+		}
+		Ref<InputEventMouseMotion> mm = ev;
+		if (mm.is_valid() && st->drag) {
+			st->pan += mm->get_relative();
+			view->queue_redraw();
+			return;
+		}
+		Ref<InputEventMagnifyGesture> mg = ev;
+		if (mg.is_valid()) {
+			st->zoom = clampf(st->zoom * (float)mg->get_factor(), 1.f, 4.f);
+			view->queue_redraw();
+		}
+	}));
+	HBoxContainer *zh = hbox(12);
+	zh->add_child(label(S("Масштаб"), 18, MUTED));
+	HSlider *zs = memnew(HSlider);
+	zs->set_min(1.0);
+	zs->set_max(4.0);
+	zs->set_step(0.01);
+	zs->set_value(1.0);
+	zs->set_h_size_flags(Control::SIZE_EXPAND_FILL);
+	zs->set_v_size_flags(Control::SIZE_SHRINK_CENTER);
+	zs->set_custom_minimum_size(Vector2(0, 40));
+	zs->connect("value_changed", FnV(zs, [view, st](const Variant &val) {
+		st->zoom = (float)(double)val;
+		view->queue_redraw();
+	}));
+	zh->add_child(zs);
+	Button *rot = button(S("Повернуть"), PANEL2, 20, Vector2(150, 50));
+	rot->connect("pressed", Fn(rot, [view, st] {
+		st->img->rotate_90(CLOCKWISE);
+		st->tex = ImageTexture::create_from_image(st->img);
+		st->pan = Vector2();
+		view->queue_redraw();
+	}));
+	zh->add_child(rot);
+	v->add_child(zh);
+	HBoxContainer *h = hbox(12);
+	Button *cancel = button(S("Отмена"), PANEL2, 22, Vector2(0, 60));
+	cancel->set_h_size_flags(Control::SIZE_EXPAND_FILL);
+	cancel->connect("pressed", Fn(cancel, [v] { close_modal(v); }));
+	h->add_child(cancel);
+	Button *ok = primary(S("Сохранить"), 24);
+	ok->set_h_size_flags(Control::SIZE_EXPAND_FILL);
+	ok->connect("pressed", Fn(ok, [host, v, st, layout, card_id, done, V] {
+		Vector2 pos;
+		float s;
+		layout(pos, s);
+		int side = std::max(8, (int)std::round(V / s));
+		int x = clampi((int)std::round(-pos.x / s), 0, std::max(0, st->img->get_width() - side));
+		int y = clampi((int)std::round(-pos.y / s), 0, std::max(0, st->img->get_height() - side));
+		side = std::min(side, std::min(st->img->get_width() - x, st->img->get_height() - y));
+		Ref<Image> sq = st->img->get_region(Rect2i(x, y, side, side));
+		String path = save_photo(card_id, sq);
+		close_modal(v);
+		if (path.is_empty()) {
+			toast(host, S("Не удалось сохранить фото"), RED);
+			return;
+		}
+		GameData::get().set_card_photo(card_id, path);
+		toast(host, S("Фото добавлено на карточку"), LIME);
+		if (done) done();
+	}));
+	h->add_child(ok);
+	v->add_child(h);
+}
+
+void pick_photo(Control *host, int card_id, std::function<void()> done) {
+	FileDialog *fd = memnew(FileDialog);
+	fd->set_file_mode(FileDialog::FILE_MODE_OPEN_FILE);
+	fd->set_access(FileDialog::ACCESS_FILESYSTEM);
+	PackedStringArray filters;
+	filters.push_back(S("*.jpg, *.jpeg, *.png, *.webp ; Фото ; image/jpeg, image/png, image/webp"));
+	fd->set_filters(filters);
+	fd->set_use_native_dialog(true);
+	fd->set_title(S("Выберите фото"));
+	String pics = OS::get_singleton()->get_system_dir(OS::SYSTEM_DIR_PICTURES);
+	if (!pics.is_empty()) fd->set_current_dir(pics);
+	fd->connect("file_selected", FnV(fd, [host, fd, card_id, done](const Variant &p) {
+		String path = p;
+		fd->queue_free();
+		Ref<Image> img = image_from_file(path);
+		if (img.is_null()) {
+			toast(host, S("Не удалось открыть фото (нужен JPG, PNG или WEBP)"), RED);
+			return;
+		}
+		crop_photo(host, card_id, img, done);
+	}));
+	fd->connect("canceled", Fn(fd, [fd] { fd->queue_free(); }));
+	host->add_child(fd);
+	fd->popup_centered_ratio(0.85f);
+}
+
+void rename_dialog(Control *host, int card_id, std::function<void()> done) {
+	Card *c = GameData::get().card_by_id(card_id);
+	if (!c) return;
+	VBoxContainer *v = modal(host, 620);
+	Label *t = label(S("Имя игрока"), 30, TEXT, HORIZONTAL_ALIGNMENT_CENTER);
+	t->add_theme_font_override("font", font_bold());
+	v->add_child(t);
+	LineEdit *le = memnew(LineEdit);
+	le->set_text(c->name);
+	le->set_max_length(22);
+	le->set_placeholder(S("Например: М. Пайн"));
+	le->set_custom_minimum_size(Vector2(0, 60));
+	le->add_theme_font_size_override("font_size", 26);
+	le->set_select_all_on_focus(true);
+	v->add_child(le);
+	HBoxContainer *h = hbox(12);
+	Button *cancel = button(S("Отмена"), PANEL2, 22, Vector2(0, 60));
+	cancel->set_h_size_flags(Control::SIZE_EXPAND_FILL);
+	cancel->connect("pressed", Fn(cancel, [v] { close_modal(v); }));
+	h->add_child(cancel);
+	Button *ok = primary(S("Готово"), 24);
+	ok->set_h_size_flags(Control::SIZE_EXPAND_FILL);
+	ok->connect("pressed", Fn(ok, [host, v, le, card_id, done] {
+		if (!GameData::get().rename_card(card_id, le->get_text())) {
+			toast(host, S("Имя слишком короткое"), RED);
+			return;
+		}
+		close_modal(v);
+		if (done) done();
+	}));
+	h->add_child(ok);
+	v->add_child(h);
+	le->call_deferred("grab_focus");
+}
 
 Ref<Font> font_bold() {
 	if (g_bold.is_null()) {
@@ -301,6 +602,12 @@ PanelContainer *card(const Card &c, Vector2 size, const String &slot_pos) {
 	top->add_child(spacer());
 	top->add_child(label(GameData::pos_ru(c.pos), (int)(size.y * 0.11f), col.lightened(0.3f), HORIZONTAL_ALIGNMENT_RIGHT));
 	v->add_child(top);
+	if (size.y >= 150) {
+		CenterContainer *pc = memnew(CenterContainer);
+		pc->set_mouse_filter(Control::MOUSE_FILTER_IGNORE);
+		pc->add_child(portrait(c, std::round(size.y * (c.photo.is_empty() ? 0.26f : 0.32f)), col));
+		v->add_child(pc);
+	}
 	Label *nm = label(short_name(c.name), (int)(size.y * 0.085f), TEXT, HORIZONTAL_ALIGNMENT_CENTER);
 	nm->set_clip_text(true);
 	nm->set_custom_minimum_size(Vector2(size.x - 20, 0));

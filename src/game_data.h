@@ -25,6 +25,7 @@ struct Card {
 	String pos = "CMF";
 	int ovr = 60, pace = 60, sho = 60, pas = 60, dri = 60, def = 60, phy = 60, gk = 20, num = 1;
 	int lvl = 0, xp = 0;
+	String photo; // user://photos/... — the player's own picture on the card
 	Dictionary to_dict() const;
 	static Card from_dict(const Dictionary &d);
 	int stat(const String &k) const;
@@ -175,6 +176,9 @@ public:
 	Card make_card(int ovr, String pos, Rng &r) const;
 	Card &add_card(Card c);
 	Card *card_by_id(int id);
+	void set_card_photo(int id, const String &path);
+	bool rename_card(int id, const String &name);
+	const Card *photo_card() const; // first card with a personal photo, if any
 	bool is_starter(int id) const;
 	int sell_card(int id);
 	std::vector<Card> open_pack(const String &id);

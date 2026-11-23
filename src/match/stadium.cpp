@@ -80,22 +80,19 @@ static void environment(Node3D *root) {
 	env->set_sky(sky);
 	env->set_ambient_source(Environment::AMBIENT_SOURCE_COLOR);
 	env->set_ambient_light_color(Color::html("b8c4e0"));
-	env->set_ambient_light_energy(0.5f);
+	env->set_ambient_light_energy(0.45f);
 	env->set_tonemapper(Environment::TONE_MAPPER_FILMIC);
 	env->set_tonemap_exposure(1.0f);
-	env->set_adjustment_enabled(true);
-	env->set_adjustment_contrast(1.08f);
-	env->set_adjustment_saturation(1.0f);
-	env->set_glow_enabled(true);
-	env->set_glow_intensity(0.35f);
-	env->set_glow_bloom(0.04f);
-	env->set_glow_hdr_bleed_threshold(1.2f);
+	// no glow / colour adjustments: on phones the GL Compatibility renderer may skip the post-process
+	// pass, so the look must come from lighting + tonemapping only to match on every device
+	env->set_adjustment_enabled(false);
+	env->set_glow_enabled(false);
 	WorldEnvironment *we = memnew(WorldEnvironment);
 	we->set_environment(env);
 	root->add_child(we);
 	DirectionalLight3D *sun = memnew(DirectionalLight3D);
 	sun->set_rotation_degrees(Vector3(-58, 28, 0));
-	sun->set_param(Light3D::PARAM_ENERGY, 1.0f);
+	sun->set_param(Light3D::PARAM_ENERGY, 0.92f);
 	sun->set_color(Color(1.f, 0.97f, 0.92f));
 	sun->set_shadow(true);
 	sun->set_shadow_mode(DirectionalLight3D::SHADOW_PARALLEL_2_SPLITS);
@@ -109,8 +106,8 @@ static void environment(Node3D *root) {
 static const char *GRASS_SHADER = R"(
 shader_type spatial;
 render_mode diffuse_lambert, specular_schlick_ggx;
-uniform vec3 c1 : source_color = vec3(0.20, 0.36, 0.15);
-uniform vec3 c2 : source_color = vec3(0.25, 0.43, 0.18);
+uniform vec3 c1 : source_color = vec3(0.165, 0.30, 0.12);
+uniform vec3 c2 : source_color = vec3(0.205, 0.36, 0.15);
 uniform float hl = 52.5;
 uniform float hw = 34.0;
 varying vec3 wp;

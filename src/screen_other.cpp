@@ -659,6 +659,10 @@ void PMResultScreen::_ready() {
 		Dictionary m = ratings[motm];
 		PanelContainer *mp = kit::panel(Color(1.f, 0.78f, 0.24f, 0.18f), 10, 10);
 		HBoxContainer *mh = kit::hbox(10);
+		if ((int)m.get("team", -1) == lt) {
+			Card *mc = g.card_by_id((int)m.get("id", 0));
+			if (mc && !mc->photo.is_empty()) mh->add_child(kit::portrait(*mc, 40, kit::GOLD));
+		}
 		mh->add_child(kit::label(S("★ Лучший игрок матча"), 18, kit::GOLD));
 		mh->add_child(kit::spacer());
 		mh->add_child(kit::label(String(m.get("name", "")) + "  " + String::num((double)m.get("rating", 6.0), 1), 20, Color(1, 1, 1)));
@@ -668,6 +672,8 @@ void PMResultScreen::_ready() {
 	for (size_t i = 0; i < mine.size() && i < 6; i++) {
 		Dictionary pr = mine[i];
 		HBoxContainer *h = kit::hbox(8);
+		Card *pcard = g.card_by_id((int)pr.get("id", 0));
+		if (pcard && !pcard->photo.is_empty()) h->add_child(kit::portrait(*pcard, 26, kit::LIME));
 		h->add_child(kit::label(GameData::pos_ru(pr.get("pos", "")), 16, kit::MUTED));
 		Label *nm = kit::label(kit::short_name(pr.get("name", "")), 19, kit::TEXT);
 		nm->set_h_size_flags(SIZE_EXPAND_FILL);

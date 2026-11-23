@@ -70,7 +70,7 @@ void PMTitle::_ready() {
 	v->add_child(gap);
 	press = kit::label(S("НАЖМИТЕ, ЧТОБЫ НАЧАТЬ"), 34, Color(1, 1, 1), HORIZONTAL_ALIGNMENT_CENTER);
 	v->add_child(press);
-	Label *ver = kit::label(S("v3.0 • C++"), 18, kit::MUTED, HORIZONTAL_ALIGNMENT_RIGHT);
+	Label *ver = kit::label(S("v3.1 • C++"), 18, kit::MUTED, HORIZONTAL_ALIGNMENT_RIGHT);
 	add_child(ver);
 	ver->set_anchors_and_offsets_preset(PRESET_BOTTOM_RIGHT);
 	ver->set_position(ver->get_position() + Vector2(-24, -16));
@@ -262,22 +262,29 @@ void PMMainMenu::_ready() {
 	right->set_mouse_filter(MOUSE_FILTER_IGNORE);
 	body->add_child(right);
 	// star player caption
-	const Card *best = nullptr;
-	for (auto &c : g.cards)
-		if (!best || c.ovr > best->ovr) best = &c;
+	const Card *best = g.photo_card();
+	bool own = best != nullptr;
+	if (!best)
+		for (auto &c : g.cards)
+			if (!best || c.ovr > best->ovr) best = &c;
 	if (best) {
 		PanelContainer *capp = kit::glass(14);
 		capp->set_mouse_filter(MOUSE_FILTER_IGNORE);
 		right->add_child(capp);
 		capp->set_anchors_and_offsets_preset(PRESET_BOTTOM_RIGHT);
-		capp->set_offset(SIDE_LEFT, -330);
+		capp->set_offset(SIDE_LEFT, -430);
 		capp->set_offset(SIDE_TOP, -118);
 		capp->set_offset(SIDE_RIGHT, 0);
 		capp->set_offset(SIDE_BOTTOM, -6);
+		HBoxContainer *caph = kit::hbox(12);
+		caph->set_mouse_filter(MOUSE_FILTER_IGNORE);
+		capp->add_child(caph);
 		VBoxContainer *cap = kit::vbox(-4);
 		cap->set_mouse_filter(MOUSE_FILTER_IGNORE);
-		capp->add_child(cap);
-		cap->add_child(kit::label(S("ЗВЕЗДА КОМАНДЫ"), 15, kit::LIME, HORIZONTAL_ALIGNMENT_RIGHT));
+		cap->set_h_size_flags(SIZE_EXPAND_FILL);
+		caph->add_child(cap);
+		caph->add_child(kit::portrait(*best, 78, own ? kit::LIME : GameData::rarity_color(GameData::rarity(best->ovr))));
+		cap->add_child(kit::label(own ? S("ВАШ ИГРОК") : S("ЗВЕЗДА КОМАНДЫ"), 15, kit::LIME, HORIZONTAL_ALIGNMENT_RIGHT));
 		Label *bn = kit::label(best->name, 28, Color(1, 1, 1), HORIZONTAL_ALIGNMENT_RIGHT);
 		bn->add_theme_font_override("font", kit::font_bold());
 		cap->add_child(bn);
